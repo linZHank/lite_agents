@@ -1,8 +1,6 @@
-""" 
-A DQN agent class 
-"""
-import tensorflow as tf
+import random
 import numpy as np
+import tensorflow as tf
 from collections import deque
 import logging
 
@@ -70,15 +68,15 @@ class ReplayBuffer:
 
     def is_ready(self, batch_size):  # warm up trick
         return batch_size <= len(self.buffer)
-
-
-
 ################################################################
 
 
 class Critic(tf.keras.Model):
-    """Critic module evaluates value of states
-    https://www.tensorflow.org/guide/keras/custom_layers_and_models
+    """Critic module evaluates value of states.
+    Source: https://www.tensorflow.org/guide/keras/custom_layers_and_models
+    TODO:
+        - Add Args and Returns.
+        - Speicify args and returns type
     """
     def __init__(self, dim_outputs, hidden_sizes=[128, 128], activation="relu", out_activation=None):
         super(Critic, self).__init__()
@@ -99,86 +97,88 @@ class Critic(tf.keras.Model):
 
         return value
 
-# def polynomial_schedule(
-#     init_value: float,
-#     end_value: float,
-#     power: int,
-#     transition_steps: int,
-#     transition_begin: int = 0
-# ):
-#     """Constructs a schedule with polynomial transition from init to end value.
-#     Source: https://github.com/deepmind/optax/blob/master/optax/_src/schedule.py
-#
-#     Args:
-#         init_value: initial value for the scalar to be annealed.
-#         end_value: end value of the scalar to be annealed.
-#         power: the power of the polynomial used to transition from init to end.
-#         transition_steps: number of steps over which annealing takes place,
-#             the scalar starts changing at `transition_begin` steps and completes
-#             the transition by `transition_begin + transition_steps` steps.
-#             If `transition_steps <= 0`, then the entire annealing process is disabled
-#             and the value is held fixed at `init_value`.
-#         transition_begin: must be positive. After how many steps to start annealing
-#             (before this many steps the scalar value is held fixed at `init_value`).
-#     Returns:
-#         schedule: A function that maps step counts to values.
-#     """
-#     if transition_steps <= 0:
-#         logging.info(
-#             'A polynomial schedule was set with a non-positive `transition_steps` '
-#             'value; this results in a constant schedule with value `init_value`.')
-#         return lambda count: init_value
-#
-#     if transition_begin < 0:
-#         logging.info(
-#             'An exponential schedule was set with a negative `transition_begin` '
-#             'value; this will result in `transition_begin` falling back to `0`.')
-#         transition_begin = 0
-#
-#     def schedule(count):
-#         count = np.clip(count - transition_begin, 0, transition_steps)
-#         frac = 1 - count / transition_steps
-#         return (init_value - end_value) * (frac**power) + end_value
-#
-#     return schedule
-#
-# class DQNAgent:
-#     def __init__(
-#         self,
-#         observation_space,
-#         action_space,
-#         activate_fn="relu",
-#         gamma=0.99,
-#         learning_rate=3e-4,
-#         update_type="polyak",
-#         polyak=0.995,
-#         update_freq=100,
-#     ):
-#         # env related
-#         self.observation_space = observation_space
-#         self.action_space = action_space
-#         # hyperparams
-#         self.epsilon_decay_schedule = polynomial_schedule(
-#             init_value=1.0,
-#             end_value=0.01,
-#             power=1,
-#             transition_steps=500,
-#         )
-#         # params
-#         self.gamma = gamma  # discount rate
-#         self.polyak = polyak
-#         self.periodic_update_freq = update_freq
-#         self.init_eps = 1.0
-#         self.final_eps = 0.1
-#         # model
-#         self.critic_net = mlp(num_outputs=action_space.n)
-#         self.online_params = None
-#         self.target_params = None
-#         # self.targ_q = Critic(dim_obs, num_act, activation)
-#         self.optimizer = tf.keras.optimizers.Adam(lr=learning_rate)
-#         # variable
-#         self.epsilon = self.init_eps
-#         self.update_counter = 0
+
+def polynomial_schedule(
+    init_value: float,
+    end_value: float,
+    power: int,
+    transition_steps: int,
+    transition_begin: int = 0
+):
+    """Constructs a schedule with polynomial transition from init to end value.
+    Source: https://github.com/deepmind/optax/blob/master/optax/_src/schedule.py
+    tODO: Move to utils.py
+
+    Args:
+        init_value: initial value for the scalar to be annealed.
+        end_value: end value of the scalar to be annealed.
+        power: the power of the polynomial used to transition from init to end.
+        transition_steps: number of steps over which annealing takes place,
+            the scalar starts changing at `transition_begin` steps and completes
+            the transition by `transition_begin + transition_steps` steps.
+            If `transition_steps <= 0`, then the entire annealing process is disabled
+            and the value is held fixed at `init_value`.
+        transition_begin: must be positive. After how many steps to start annealing
+            (before this many steps the scalar value is held fixed at `init_value`).
+    Returns:
+        schedule: A function that maps step counts to values.
+    """
+    if transition_steps <= 0:
+        logging.info(
+            'A polynomial schedule was set with a non-positive `transition_steps` '
+            'value; this results in a constant schedule with value `init_value`.')
+        return lambda count: init_value
+
+    if transition_begin < 0:
+        logging.info(
+            'An exponential schedule was set with a negative `transition_begin` '
+            'value; this will result in `transition_begin` falling back to `0`.')
+        transition_begin = 0
+
+    def schedule(count):
+        count = np.clip(count - transition_begin, 0, transition_steps)
+        frac = 1 - count / transition_steps
+        return (init_value - end_value) * (frac**power) + end_value
+
+    return schedule
+
+
+class DQNAgent:
+    def __init__(
+        self,
+        env,
+        gamma=0.99,
+        learning_rate=3e-4,
+        update_type="polyak",
+        polyak=0.995,
+        update_freq=100,
+    ):
+        # env related
+        self._env = env
+        # self.observation_space = observation_space
+        # self.action_space = action_space
+        # hyperparams
+        self.epsilon_decay_schedule = polynomial_schedule(
+            init_value=1.0,
+            end_value=0.01,
+            power=1,
+            transition_steps=500,
+        )
+        # params
+        self.gamma = gamma  # discount rate
+        self.polyak = polyak
+        self.periodic_update_freq = update_freq
+        self.init_eps = 1.0
+        self.final_eps = 0.1
+        # model
+        self.critic_net = Critic(dim_outputs=env.action_space.n)
+        self.online_params = None
+        self.target_params = None
+        # self.targ_q = Critic(dim_obs, num_act, activation)
+        self.optimizer = tf.keras.optimizers.Adam(lr=learning_rate)
+        # variable
+        self.epsilon = self.init_eps
+        self.update_counter = 0
 #
 #     def linear_epsilon_decay(self, episode, decay_period, warmup_episodes):
 #         episodes_left = decay_period + warmup_episodes - episode
@@ -186,17 +186,18 @@ class Critic(tf.keras.Model):
 #         bonus = np.clip(bonus, 0.0, self.init_eps - self.final_eps)
 #         self.epsilon = self.final_eps + bonus
 #
-#     def make_decision(self, obs, episode_count, eval_flag):
-#         obs = tf.expand_dims(obs, 0)  # add dummy batch
-#         q_vals = tf.squeeze(self.critic_net(obs))
-#         epsilon = self.epsilon_decay_schedule(episode_count)
-#         if np.random.rand() > self.epsilon:
-#             a = tf.argmax(self.q(obs), axis=-1)
-#         else:
-#             a = tf.random.uniform(
-#                 shape=[1, 1], maxval=self.num_act, dtype=tf.dtypes.int32
-#             )
-#         return a
+    def make_decision(self, obs, episode_count, eval_flag):
+        obs = tf.expand_dims(obs, 0)  # add dummy batch
+        q_vals = self.critic_net(obs)
+        self._epsilon = self.epsilon_decay_schedule(episode_count)
+        action = tf.argmax(q_vals, axis=-1)
+        if not eval_flag:
+            if tf.random.uniform(shape=(), maxval=1) < self._epsilon:
+                action = tf.random.uniform(
+                shape=[], maxval=self._env.action_space.n, dtype=tf.dtypes.int32
+            )
+        
+        return action, q_vals
 #
 #     def train_one_batch(self, data):
 #         # update critic
@@ -235,3 +236,24 @@ class Critic(tf.keras.Model):
 #                 )
 #
 #         return loss_q
+
+
+# Uncomment following to test
+import gymnasium as gym
+from time import time
+
+env = gym.make("LunarLander-v2")  # , render_mode="human")
+# env = gym.make("CartPole-v0")
+agent = DQNAgent(env=env)
+buf = ReplayBuffer(capacity=int(1e6))
+step_count = 0
+episode_count = 0
+t0 = time()
+pobs, info = env.reset()
+print(f"initial observation: {pobs}, info: {info}")  # debug
+term, trun = False, False
+rew, episodic_return = 0, 0
+deposit_return, averaged_return = [], []
+for _ in range(1000):
+    act, _ = agent.make_decision(obs=pobs, episode_count=1, eval_flag=False)
+    print(act)
