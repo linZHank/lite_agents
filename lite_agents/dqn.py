@@ -59,7 +59,7 @@ class ReplayBuffer:
         slices = np.random.randint(low=0, high=self.size, size=batch_size)
         data = dict(
             pobs=tf.convert_to_tensor(self.pobs_buf[slices], dtype=tf.float32),
-            acts=tf.convert_to_tensor(self.acts_buf[slices], dtype=tf.float32),
+            acts=tf.convert_to_tensor(self.acts_buf[slices], dtype=tf.int32),
             rews=tf.convert_to_tensor(self.rews_buf[slices], dtype=tf.float32),
             disc=tf.convert_to_tensor(discount_rate * (1 - self.term_buf[slices]), dtype=tf.float32),
             nobs=tf.convert_to_tensor(self.nobs_buf[slices], dtype=tf.float32)
@@ -237,7 +237,7 @@ class DQNAgent:
     #
     #     return loss_q
 
-    @tf.function
+    # @tf.function
     def update_params(self, batch):
         # update target params
         if self.polyak > 0:
@@ -252,14 +252,14 @@ class DQNAgent:
                 )
         # update online_params
         with tf.GradientTape() as tape:
-            tape.watch(self.critic_net.trainable_weights)
-            prev_qvals = self.critic_net(batch["pobs"])
+            tape.watch(self.critic.trainable_weights)
+            prev_qvals = self.critic(batch["pobs"])
             prev_qsa = prev_qvals * tf.one_hot(batch["acts"], self._num_acts)
             with tape.stop_recording():
-                self.critic_net.set_weights(self.target_params)
-                next_qvals = self.critic_net(batch["nobs"])
-                self.critic_net.set_weights(self.online_params)
-                duel_next_qvals = self.critic_net(batch["nobs"])
+                self.critic.set_weights(self.target_params)
+                next_qvals = self.critic(batch["nobs"])
+                self.critic.set_weights(self.online_params)
+                duel_next_qvals = self.critic(batch["nobs"])
                 next_acts = tf.one_hot(tf.argmax(duel_next_qvals, axis=-1), self._num_acts)
                 next_qsa = next_qvals * next_acts
                 target_q = batch["rews"] + batch["disc"] * tf.reduce_sum(next_qsa, axis=-1)
@@ -305,11 +305,12 @@ for _ in range(10000):
         loss_value = agent.update_params(
             buf.sample(batch_size=1024, discount_rate=0.99),
         )
-        print(f"loss: {loss_value}")
+        # print(f"loss: {loss_value}")
     if term or trun:
         deposit_return.append(episodic_return)
         averaged_return.append(np.average(deposit_return))
         print(f"episode: {episode_count+1}, step: {step_count}, epsilon: {agent._epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
+        print(f"average_return: {averaged_return[-1]} \n----\n")
         episode_count += 1
         pobs, _ = env.reset()
         term, trun = False, False
