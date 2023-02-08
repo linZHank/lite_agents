@@ -34,40 +34,38 @@ logging.basicConfig(format="%(asctime)s %(message)s", level=logging.DEBUG)
 
 ################################################################
 class ReplayBuffer:
-    """A simple off-policy replay buffer."""
+    """
+    A simple FIFO experience replay buffer for DQN agents.
+    """
 
-    def __init__(self, capacity):
-        self.buffer = deque(maxlen=capacity)
+    def __init__(self, dim_obs: int, capacity: int):
+        self.pobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
+        self.acts_buf = np.zeros(shape=capacity, dtype=np.int32)
+        self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
+        self.term_buf = np.zeros(shape=capacity, dtype=np.float32)
+        self.nobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
+        self.ptr, self.buf_size, self.capacity = 0, 0, capacity
 
-    def store(self, prev_obs, action, reward, terminated, next_obs):
-        if action is not None:
-            self.buffer.append(
-                (
-                    prev_obs,
-                    action,
-                    reward,
-                    terminated,
-                    next_obs,
-                )
-            )
+    def store(self, pobs, act, rew, term, nobs):
+        self.pobs_buf[self.ptr] = pobs
+        self.nobs_buf[self.ptr] = nobs
+        self.acts_buf[self.ptr] = act
+        self.rews_buf[self.ptr] = rew
+        self.term_buf[self.ptr] = term
+        self.ptr = (self.ptr+1) % self.capacity
+        self.buf_size = min(self.buf_size+1, self.capacity)
 
-    def sample(self, batch_size, discount_factor):
-
-        pobs, acts, rews, terms, nobs = zip(*random.sample(
-            self.buffer,
-            batch_size,
-        ))
-
-        return (
-            np.stack(pobs, dtype=np.float32),
-            np.asarray(acts, dtype=np.int32),
-            np.asarray(rews, dtype=np.float32),
-            (1 - np.asarray(terms, dtype=np.float32)) * discount_factor,
-            np.stack(nobs, dtype=np.float32),
+    def sample(self, batch_size: int = 128) -> dict:
+        slices = np.random.randint(low=0, high=self.buf_size, size=batch_size)
+        data = dict(
+            pobs_batch=tf.convert_to_tensor(self.pobs_buf[slices]),
+            acts_batch=tf.convert_to_tensor(self.acts_buf[slices]),
+            rews_batch=tf.convert_to_tensor(self.rews_buf[slices]),
+            term_batch=tf.convert_to_tensor(self.term_buf[slices]),
+            nobs_batch=tf.convert_to_tensor(self.nobs_buf[slices])
         )
 
-    def is_ready(self, batch_size):  # warm up trick
-        return batch_size <= len(self.buffer)
+        return data
 ################################################################
 
 
@@ -78,7 +76,7 @@ class Critic(tf.keras.Model):
         - Add Args and Returns.
         - Speicify args and returns type
     """
-    def __init__(self, dim_outputs, hidden_sizes=[128, 128], activation="relu", out_activation=None):
+    def __init__(self, dim_outputs, hidden_sizes=[4, 2], activation="relu", out_activation=None):
         super(Critic, self).__init__()
         # hyperparams
         self._dim_outputs = dim_outputs
@@ -146,21 +144,20 @@ def polynomial_schedule(
 class DQNAgent:
     def __init__(
         self,
-        env,
+        dim_obs,
+        num_acts,
         gamma=0.99,
         learning_rate=3e-4,
-        update_type="polyak",
         polyak=0.995,
         update_freq=100,
     ):
         # env related
-        self._env = env
-        # self.observation_space = observation_space
-        # self.action_space = action_space
+        self._dim_obs = dim_obs  # not necessary
+        self._num_acts = num_acts
         # hyperparams
         self.epsilon_decay_schedule = polynomial_schedule(
             init_value=1.0,
-            end_value=0.01,
+            end_value=0.1,
             power=1,
             transition_steps=500,
         )
@@ -168,16 +165,14 @@ class DQNAgent:
         self.gamma = gamma  # discount rate
         self.polyak = polyak
         self.periodic_update_freq = update_freq
-        self.init_eps = 1.0
-        self.final_eps = 0.1
         # model
-        self.critic_net = Critic(dim_outputs=env.action_space.n)
+        self.critic_net = Critic(dim_outputs=num_acts)
         self.online_params = None
         self.target_params = None
         # self.targ_q = Critic(dim_obs, num_act, activation)
         self.optimizer = tf.keras.optimizers.Adam(lr=learning_rate)
         # variable
-        self.epsilon = self.init_eps
+        self.epsilon = 0.
         self.update_counter = 0
 #
 #     def linear_epsilon_decay(self, episode, decay_period, warmup_episodes):
@@ -186,6 +181,7 @@ class DQNAgent:
 #         bonus = np.clip(bonus, 0.0, self.init_eps - self.final_eps)
 #         self.epsilon = self.final_eps + bonus
 #
+
     @tf.function
     def make_decision(self, obs, episode_count, eval_flag):
         obs = tf.expand_dims(obs, 0)  # add dummy batch
@@ -195,58 +191,109 @@ class DQNAgent:
         if not eval_flag:
             if tf.random.uniform(shape=(), maxval=1) < self._epsilon:
                 action = tf.random.uniform(
-                shape=[], maxval=self._env.action_space.n, dtype=tf.dtypes.int32
-            )
-        
+                    shape=[],
+                    maxval=self._num_acts,
+                    dtype=tf.dtypes.int32,
+                )
+
         return action, q_vals
-#
-#     def train_one_batch(self, data):
-#         # update critic
-#         with tf.GradientTape() as tape:
-#             tape.watch(self.q.trainable_weights)
-#             pred_qval = tf.math.reduce_sum(
-#                 self.q(data["obs"]) * tf.one_hot(data["act"], self.num_act), axis=-1
-#             )
-#             targ_qval = data["rew"] + self.gamma * (
-#                 1 - data["done"]
-#             ) * tf.math.reduce_sum(
-#                 self.targ_q(data["nobs"])
-#                 * tf.one_hot(
-#                     tf.math.argmax(self.q(data["nobs"]), axis=1), self.num_act
-#                 ),
-#                 axis=1,
-#             )  # double DQN trick
-#             loss_q = tf.keras.losses.MSE(y_true=targ_qval, y_pred=pred_qval)
-#         logging.debug("q loss: {}".format(loss_q))
-#         grads = tape.gradient(loss_q, self.q.trainable_weights)
-#         self.optimizer.apply_gradients(zip(grads, self.q.trainable_weights))
-#         self.update_counter += 1
-#         if self.polyak > 0:
-#             # Polyak average update target Q-nets
-#             q_weights_update = []
-#             for w_q, w_targ_q in zip(self.q.get_weights(), self.targ_q.get_weights()):
-#                 w_q_upd = self.polyak * w_targ_q
-#                 w_q_upd = w_q_upd + (1 - self.polyak) * w_q
-#                 q_weights_update.append(w_q_upd)
-#             self.targ_q.set_weights(q_weights_update)
-#         else:
-#             if not self.update_counter % self.update_freq:
-#                 self.targ_q.q_net.set_weights(self.q.q_net.get_weights())
-#                 print(
-#                     "\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget Q-net updated\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
-#                 )
-#
-#         return loss_q
+
+    # def update_params(self, data):
+    #     # update critic
+    #     with tf.GradientTape() as tape:
+    #         tape.watch(self.q.trainable_weights)
+    #         pred_qval = tf.math.reduce_sum(
+    #             self.q(data["obs"]) * tf.one_hot(data["act"], self.num_act), axis=-1
+    #         )
+    #         targ_qval = data["rew"] + self.gamma * (
+    #             1 - data["done"]
+    #         ) * tf.math.reduce_sum(
+    #             self.targ_q(data["nobs"])
+    #             * tf.one_hot(
+    #                 tf.math.argmax(self.q(data["nobs"]), axis=1), self.num_act
+    #             ),
+    #             axis=1,
+    #         )  # double DQN trick
+    #         loss_q = tf.keras.losses.MSE(y_true=targ_qval, y_pred=pred_qval)
+    #     logging.debug("q loss: {}".format(loss_q))
+    #     grads = tape.gradient(loss_q, self.q.trainable_weights)
+    #     self.optimizer.apply_gradients(zip(grads, self.q.trainable_weights))
+    #     self.update_counter += 1
+    #     if self.polyak > 0:
+    #         # Polyak average update target Q-nets
+    #         q_weights_update = []
+    #         for w_q, w_targ_q in zip(self.q.get_weights(), self.targ_q.get_weights()):
+    #             w_q_upd = self.polyak * w_targ_q
+    #             w_q_upd = w_q_upd + (1 - self.polyak) * w_q
+    #             q_weights_update.append(w_q_upd)
+    #         self.targ_q.set_weights(q_weights_update)
+    #     else:
+    #         if not self.update_counter % self.update_freq:
+    #             self.targ_q.q_net.set_weights(self.q.q_net.get_weights())
+    #             print(
+    #                 "\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget Q-net updated\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+    #             )
+    #
+    #     return loss_q
+
+    def update_params(self, data):
+        # update target params
+        if self.polyak > 0:
+            for i in range(len(self.online_params)):
+                self.target_params[i] = (1.0 - self.polyak) * self.online_params[i] \
+                    + self.polyak * self.target_params[i]
+        else:
+            if not self.update_counter % self.update_freq:
+                self.target_params = self.online_params.copy()
+                print(
+                    f"\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget params updated at step: {self.update_counter}\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+                )
+        # update critic_net
+        with tf.GradientTape() as tape:
+            tape.watch(self.q.trainable_weights)
+            pred_qval = tf.math.reduce_sum(
+                self.q(data["obs"]) * tf.one_hot(data["act"], self.num_act), axis=-1
+            )
+            targ_qval = data["rew"] + self.gamma * (
+                1 - data["done"]
+            ) * tf.math.reduce_sum(
+                self.targ_q(data["nobs"])
+                * tf.one_hot(
+                    tf.math.argmax(self.q(data["nobs"]), axis=1), self.num_act
+                ),
+                axis=1,
+            )  # double DQN trick
+            loss_q = tf.keras.losses.MSE(y_true=targ_qval, y_pred=pred_qval)
+        logging.debug("q loss: {}".format(loss_q))
+        grads = tape.gradient(loss_q, self.q.trainable_weights)
+        self.optimizer.apply_gradients(zip(grads, self.q.trainable_weights))
+        self.update_counter += 1
+        if self.polyak > 0:
+            # Polyak average update target Q-nets
+            q_weights_update = []
+            for w_q, w_targ_q in zip(self.q.get_weights(), self.targ_q.get_weights()):
+                w_q_upd = self.polyak * w_targ_q
+                w_q_upd = w_q_upd + (1 - self.polyak) * w_q
+                q_weights_update.append(w_q_upd)
+            self.targ_q.set_weights(q_weights_update)
+        else:
+            if not self.update_counter % self.update_freq:
+                self.targ_q.q_net.set_weights(self.q.q_net.get_weights())
+                print(
+                    "\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget Q-net updated\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+                )
+
+        return loss_q
 
 
 # Uncomment following to test
 import gymnasium as gym
 from time import time
 
-env = gym.make("LunarLander-v2", render_mode="human")
+env = gym.make("LunarLander-v2")  # , render_mode="human")
 # env = gym.make("CartPole-v0")
-agent = DQNAgent(env=env)
-buf = ReplayBuffer(capacity=int(1e6))
+agent = DQNAgent(dim_obs=env.observation_space.shape[0], num_acts=env.action_space.n)
+buf = ReplayBuffer(dim_obs=env.observation_space.shape[0], capacity=int(1e6))
 step_count = 0
 episode_count = 0
 t0 = time()
@@ -255,14 +302,15 @@ pobs, info = env.reset()
 term, trun = False, False
 rew, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for _ in range(2000):
+for _ in range(1000):
     act, _ = agent.make_decision(
         obs=pobs, 
         episode_count=episode_count,
         eval_flag=False
     )
     nobs, rew, term, trun, info = env.step(act.numpy())
-    print(f"pobs: {nobs}\n act: {act}\n rew: {rew}\n term: {term}\n trun: {trun}\n nobs: {nobs}\n")  # debug
+    print(f"pobs: {pobs}\n act: {act}\n rew: {rew}\n term: {term}\n trun: {trun}\n nobs: {nobs}\n")  # debug
+    buf.store(pobs, act, rew, term, nobs)
     episodic_return += rew
     pobs = nobs
     step_count += 1

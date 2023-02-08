@@ -129,26 +129,6 @@ class DQNAgent:
 
         return action, q_val, epsilon
 
-    # def update_params(self, data):
-    #     """Periodic update online params.
-    #
-    #     TODO: add polyak update
-    #     """
-    #     self.target_params = optax.periodic_update(
-    #         self.online_params,
-    #         self.target_params,
-    #         self.update_count,
-    #         self.update_period,
-    #     )
-    #     loss_value, loss_grads = jax.value_and_grad(self.loss_fn)(
-    #         self.online_params, self.target_params, *data
-    #     )  # but seems jax.grad only compute grads for first explicit arg
-    #     updates, self.opt_state = self.optimizer.update(loss_grads, self.opt_state)
-    #     self.online_params = optax.apply_updates(self.online_params, updates)
-    #     self.update_count += 1
-    #
-    #     return loss_value
-
     def update_params(self, params, data):
         """Periodic update online params.
 
