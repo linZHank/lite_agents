@@ -38,11 +38,11 @@ class ReplayBuffer:
     A simple FIFO experience replay buffer for DQN agents.
     """
 
-    def __init__(self, dim_obs: int, capacity: int):
+    def __init__(self, dim_obs: int, capacity: int = int(1e4)):
         self.pobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
         self.acts_buf = np.zeros(shape=capacity, dtype=np.int32)
         self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
-        self.term_buf = np.zeros(shape=capacity, dtype=np.float32)
+        self.term_buf = np.zeros(shape=capacity, dtype=np.bool)
         self.nobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
         self.ptr, self.buf_size, self.capacity = 0, 0, capacity
 
@@ -55,14 +55,14 @@ class ReplayBuffer:
         self.ptr = (self.ptr+1) % self.capacity
         self.buf_size = min(self.buf_size+1, self.capacity)
 
-    def sample(self, batch_size: int = 128) -> dict:
+    def sample(self, batch_size: int = 128, discount_rate: float = 0.99) -> dict:
         slices = np.random.randint(low=0, high=self.buf_size, size=batch_size)
         data = dict(
-            pobs=tf.convert_to_tensor(self.pobs_buf[slices]),
-            acts=tf.convert_to_tensor(self.acts_buf[slices]),
-            rews=tf.convert_to_tensor(self.rews_buf[slices]),
-            term=tf.convert_to_tensor(self.term_buf[slices]),
-            nobs=tf.convert_to_tensor(self.nobs_buf[slices])
+            pobs=tf.convert_to_tensor(self.pobs_buf[slices], dtype=tf.float32),
+            acts=tf.convert_to_tensor(self.acts_buf[slices], dtype=tf.float32),
+            rews=tf.convert_to_tensor(self.rews_buf[slices], dtype=tf.float32),
+            disc=tf.convert_to_tensor(1 - self.term_buf[slices], dtype=tf.float32),
+            nobs=tf.convert_to_tensor(self.nobs_buf[slices], dtype=tf.float32)
         )
 
         return data
@@ -248,39 +248,27 @@ class DQNAgent:
                 print(
                     f"\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget params updated at step: {self.update_counter}\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
                 )
-        # update critic_net
+        # update online_params
         with tf.GradientTape() as tape:
             tape.watch(self.critic_net.trainable_weights)
-            prev_qval = self.critic_net(batch["pobs"])
+            prev_qvals = self.critic_net(batch["pobs"])
+            prev_qsa = prev_qvals * tf.one_hot(batch["acts"], self._num_acts)
             with tape.stop_recording():
                 self.critic_net.set_weights(self.target_params)
-                next_qval = self.critic_net(batch["nobs"])
-            self.critic_net.set_weights(self.online_params)
-            duel_qval = self.critic_net(batch["nobs"])
-            target_qval = batch["rews"] \
-                + self.gamma * (1 - batch["term"]) \
-                * next_qval[duel_qval.argmax()]
-
-
-            pred_qval = tf.math.reduce_sum(
-                self.q(data["obs"]) * tf.one_hot(data["act"], self.num_act), axis=-1
-            )
-            targ_qval = data["rew"] + self.gamma * (
-                1 - data["done"]
-            ) * tf.math.reduce_sum(
-                self.targ_q(data["nobs"])
-                * tf.one_hot(
-                    tf.math.argmax(self.q(data["nobs"]), axis=1), self.num_act
-                ),
-                axis=1,
-            )  # double DQN trick
-            loss_q = tf.keras.losses.MSE(y_true=targ_qval, y_pred=pred_qval)
-        logging.debug("q loss: {}".format(loss_q))
-        grads = tape.gradient(loss_q, self.q.trainable_weights)
-        self.optimizer.apply_gradients(zip(grads, self.q.trainable_weights))
+                next_qvals = self.critic_net(batch["nobs"])
+                self.critic_net.set_weights(self.online_params)
+                duel_next_qvals = self.critic_net(batch["nobs"])
+                next_acts = tf.one_hot(tf.argmax(duel_next_qvals, axis=-1), self._num_acts)
+                next_qsa = next_qvals * next_acts
+                target_q = batch["rews"] + batch["disc"] * tf.reduce_sum(next_qsa, axis=-1)
+            pred_q = tf.reduce_sum(prev_qsa, axis=-1)
+            td_error = tf.keras.losses.MSE(y_true=target_q, y_pred=pred_q)
+        grads = tape.gradient(td_error, self.critic.trainable_weights)
+        self.optimizer.apply_gradients(zip(grads, self.critic.trainable_weights))
+        self.online_params = self.critic.get_weights()
         self.update_counter += 1
 
-        return loss_q
+        return td_error
 
 
 # Uncomment following to test
