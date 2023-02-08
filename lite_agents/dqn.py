@@ -159,7 +159,7 @@ class DQNAgent:
             init_value=1.0,
             end_value=0.1,
             power=1,
-            transition_steps=500,
+            transition_steps=400,
         )
         # params
         self.gamma = gamma  # discount rate
@@ -289,7 +289,7 @@ pobs, info = env.reset()
 term, trun = False, False
 rew, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for _ in range(10000):
+for _ in range(100000):
     act, _ = agent.make_decision(
         obs=pobs, 
         episode_count=episode_count,
