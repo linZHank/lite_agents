@@ -42,9 +42,9 @@ class ReplayBuffer:
         self.pobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
         self.acts_buf = np.zeros(shape=capacity, dtype=np.int32)
         self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
-        self.term_buf = np.zeros(shape=capacity, dtype=np.bool)
+        self.term_buf = np.zeros(shape=capacity, dtype=bool)
         self.nobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
-        self.ptr, self.buf_size, self.capacity = 0, 0, capacity
+        self.ptr, self.size, self.capacity = 0, 0, capacity
 
     def store(self, pobs, act, rew, term, nobs):
         self.pobs_buf[self.ptr] = pobs
@@ -53,15 +53,15 @@ class ReplayBuffer:
         self.rews_buf[self.ptr] = rew
         self.term_buf[self.ptr] = term
         self.ptr = (self.ptr+1) % self.capacity
-        self.buf_size = min(self.buf_size+1, self.capacity)
+        self.size = min(self.size+1, self.capacity)
 
     def sample(self, batch_size: int = 128, discount_rate: float = 0.99) -> dict:
-        slices = np.random.randint(low=0, high=self.buf_size, size=batch_size)
+        slices = np.random.randint(low=0, high=self.size, size=batch_size)
         data = dict(
             pobs=tf.convert_to_tensor(self.pobs_buf[slices], dtype=tf.float32),
             acts=tf.convert_to_tensor(self.acts_buf[slices], dtype=tf.float32),
             rews=tf.convert_to_tensor(self.rews_buf[slices], dtype=tf.float32),
-            disc=tf.convert_to_tensor(1 - self.term_buf[slices], dtype=tf.float32),
+            disc=tf.convert_to_tensor(discount_rate * (1 - self.term_buf[slices]), dtype=tf.float32),
             nobs=tf.convert_to_tensor(self.nobs_buf[slices], dtype=tf.float32)
         )
 
@@ -76,7 +76,7 @@ class Critic(tf.keras.Model):
         - Add Args and Returns.
         - Speicify args and returns type
     """
-    def __init__(self, dim_outputs, hidden_sizes=[4, 2], activation="relu", out_activation=None):
+    def __init__(self, dim_outputs, hidden_sizes=[128, 128], activation="relu", out_activation=None):
         super(Critic, self).__init__()
         # hyperparams
         self._dim_outputs = dim_outputs
@@ -144,16 +144,16 @@ def polynomial_schedule(
 class DQNAgent:
     def __init__(
         self,
-        dim_obs,
-        num_acts,
+        env,
         gamma=0.99,
         learning_rate=3e-4,
         polyak=0.995,
         update_freq=100,
     ):
         # env related
-        self._dim_obs = dim_obs  # not necessary
-        self._num_acts = num_acts
+        self._env = env
+        self._dim_obs = env.observation_space.shape[0]  # not necessary
+        self._num_acts = env.action_space.n
         # hyperparams
         self.epsilon_decay_schedule = polynomial_schedule(
             init_value=1.0,
@@ -165,10 +165,11 @@ class DQNAgent:
         self.gamma = gamma  # discount rate
         self.polyak = polyak
         self.periodic_update_freq = update_freq
-        # model
-        self.critic = Critic(dim_outputs=num_acts)
-        self.online_params = None
-        self.target_params = None
+        # init critic network
+        self.critic = Critic(dim_outputs=self._num_acts)
+        self.critic(np.expand_dims(env.observation_space.sample(), axis=0))
+        self.online_params = self.critic.get_weights()
+        self.target_params = self.online_params.copy()
         # self.targ_q = Critic(dim_obs, num_act, activation)
         self.optimizer = tf.keras.optimizers.Adam(lr=learning_rate)
         # variable
@@ -236,6 +237,7 @@ class DQNAgent:
     #
     #     return loss_q
 
+    @tf.function
     def update_params(self, batch):
         # update target params
         if self.polyak > 0:
@@ -277,7 +279,7 @@ from time import time
 
 env = gym.make("LunarLander-v2")  # , render_mode="human")
 # env = gym.make("CartPole-v0")
-agent = DQNAgent(dim_obs=env.observation_space.shape[0], num_acts=env.action_space.n)
+agent = DQNAgent(env)
 buf = ReplayBuffer(dim_obs=env.observation_space.shape[0], capacity=int(1e6))
 step_count = 0
 episode_count = 0
@@ -287,18 +289,23 @@ pobs, info = env.reset()
 term, trun = False, False
 rew, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for _ in range(1000):
+for _ in range(10000):
     act, _ = agent.make_decision(
         obs=pobs, 
         episode_count=episode_count,
         eval_flag=False
     )
     nobs, rew, term, trun, info = env.step(act.numpy())
-    print(f"pobs: {pobs}\n act: {act}\n rew: {rew}\n term: {term}\n trun: {trun}\n nobs: {nobs}\n")  # debug
+    # print(f"pobs: {pobs}\n act: {act}\n rew: {rew}\n term: {term}\n trun: {trun}\n nobs: {nobs}\n")  # debug
     buf.store(pobs, act, rew, term, nobs)
     episodic_return += rew
     pobs = nobs
     step_count += 1
+    if buf.size > 1024:
+        loss_value = agent.update_params(
+            buf.sample(batch_size=1024, discount_rate=0.99),
+        )
+        print(f"loss: {loss_value}")
     if term or trun:
         deposit_return.append(episodic_return)
         averaged_return.append(np.average(deposit_return))
