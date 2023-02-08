@@ -186,11 +186,12 @@ class DQNAgent:
 #         bonus = np.clip(bonus, 0.0, self.init_eps - self.final_eps)
 #         self.epsilon = self.final_eps + bonus
 #
+    @tf.function
     def make_decision(self, obs, episode_count, eval_flag):
         obs = tf.expand_dims(obs, 0)  # add dummy batch
         q_vals = self.critic_net(obs)
         self._epsilon = self.epsilon_decay_schedule(episode_count)
-        action = tf.argmax(q_vals, axis=-1)
+        action = tf.argmax(q_vals, axis=-1, output_type=tf.dtypes.int32)
         if not eval_flag:
             if tf.random.uniform(shape=(), maxval=1) < self._epsilon:
                 action = tf.random.uniform(
@@ -242,7 +243,7 @@ class DQNAgent:
 import gymnasium as gym
 from time import time
 
-env = gym.make("LunarLander-v2")  # , render_mode="human")
+env = gym.make("LunarLander-v2", render_mode="human")
 # env = gym.make("CartPole-v0")
 agent = DQNAgent(env=env)
 buf = ReplayBuffer(capacity=int(1e6))
@@ -250,10 +251,26 @@ step_count = 0
 episode_count = 0
 t0 = time()
 pobs, info = env.reset()
-print(f"initial observation: {pobs}, info: {info}")  # debug
+# print(f"initial observation: {pobs}, info: {info}")  # debug
 term, trun = False, False
 rew, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for _ in range(1000):
-    act, _ = agent.make_decision(obs=pobs, episode_count=1, eval_flag=False)
-    print(act)
+for _ in range(2000):
+    act, _ = agent.make_decision(
+        obs=pobs, 
+        episode_count=episode_count,
+        eval_flag=False
+    )
+    nobs, rew, term, trun, info = env.step(act.numpy())
+    print(f"pobs: {nobs}\n act: {act}\n rew: {rew}\n term: {term}\n trun: {trun}\n nobs: {nobs}\n")  # debug
+    episodic_return += rew
+    pobs = nobs
+    step_count += 1
+    if term or trun:
+        deposit_return.append(episodic_return)
+        averaged_return.append(np.average(deposit_return))
+        print(f"episode: {episode_count+1}, step: {step_count}, epsilon: {agent._epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
+        episode_count += 1
+        pobs, _ = env.reset()
+        term, trun = False, False
+        rew, episodic_return = 0, 0
