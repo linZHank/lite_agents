@@ -58,11 +58,11 @@ class ReplayBuffer:
     def sample(self, batch_size: int = 128) -> dict:
         slices = np.random.randint(low=0, high=self.buf_size, size=batch_size)
         data = dict(
-            pobs_batch=tf.convert_to_tensor(self.pobs_buf[slices]),
-            acts_batch=tf.convert_to_tensor(self.acts_buf[slices]),
-            rews_batch=tf.convert_to_tensor(self.rews_buf[slices]),
-            term_batch=tf.convert_to_tensor(self.term_buf[slices]),
-            nobs_batch=tf.convert_to_tensor(self.nobs_buf[slices])
+            pobs=tf.convert_to_tensor(self.pobs_buf[slices]),
+            acts=tf.convert_to_tensor(self.acts_buf[slices]),
+            rews=tf.convert_to_tensor(self.rews_buf[slices]),
+            term=tf.convert_to_tensor(self.term_buf[slices]),
+            nobs=tf.convert_to_tensor(self.nobs_buf[slices])
         )
 
         return data
@@ -91,7 +91,7 @@ class Critic(tf.keras.Model):
 
     @tf.function
     def call(self, obs):
-        value = tf.squeeze(self.critic_net(obs), axis=0)
+        value = tf.squeeze(self.critic_net(obs))
 
         return value
 
@@ -166,7 +166,7 @@ class DQNAgent:
         self.polyak = polyak
         self.periodic_update_freq = update_freq
         # model
-        self.critic_net = Critic(dim_outputs=num_acts)
+        self.critic = Critic(dim_outputs=num_acts)
         self.online_params = None
         self.target_params = None
         # self.targ_q = Critic(dim_obs, num_act, activation)
@@ -185,7 +185,7 @@ class DQNAgent:
     @tf.function
     def make_decision(self, obs, episode_count, eval_flag):
         obs = tf.expand_dims(obs, 0)  # add dummy batch
-        q_vals = self.critic_net(obs)
+        q_vals = self.critic(obs)
         self._epsilon = self.epsilon_decay_schedule(episode_count)
         action = tf.argmax(q_vals, axis=-1, output_type=tf.dtypes.int32)
         if not eval_flag:
@@ -236,7 +236,7 @@ class DQNAgent:
     #
     #     return loss_q
 
-    def update_params(self, data):
+    def update_params(self, batch):
         # update target params
         if self.polyak > 0:
             for i in range(len(self.online_params)):
@@ -250,7 +250,18 @@ class DQNAgent:
                 )
         # update critic_net
         with tf.GradientTape() as tape:
-            tape.watch(self.q.trainable_weights)
+            tape.watch(self.critic_net.trainable_weights)
+            prev_qval = self.critic_net(batch["pobs"])
+            with tape.stop_recording():
+                self.critic_net.set_weights(self.target_params)
+                next_qval = self.critic_net(batch["nobs"])
+            self.critic_net.set_weights(self.online_params)
+            duel_qval = self.critic_net(batch["nobs"])
+            target_qval = batch["rews"] \
+                + self.gamma * (1 - batch["term"]) \
+                * next_qval[duel_qval.argmax()]
+
+
             pred_qval = tf.math.reduce_sum(
                 self.q(data["obs"]) * tf.one_hot(data["act"], self.num_act), axis=-1
             )
@@ -268,20 +279,6 @@ class DQNAgent:
         grads = tape.gradient(loss_q, self.q.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.q.trainable_weights))
         self.update_counter += 1
-        if self.polyak > 0:
-            # Polyak average update target Q-nets
-            q_weights_update = []
-            for w_q, w_targ_q in zip(self.q.get_weights(), self.targ_q.get_weights()):
-                w_q_upd = self.polyak * w_targ_q
-                w_q_upd = w_q_upd + (1 - self.polyak) * w_q
-                q_weights_update.append(w_q_upd)
-            self.targ_q.set_weights(q_weights_update)
-        else:
-            if not self.update_counter % self.update_freq:
-                self.targ_q.q_net.set_weights(self.q.q_net.get_weights())
-                print(
-                    "\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget Q-net updated\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
-                )
 
         return loss_q
 
