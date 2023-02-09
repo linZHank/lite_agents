@@ -100,10 +100,6 @@ class DQNAgent:
         self.update_params = jax.jit(self.update_params)
 
     def init_params(self, key: xla_extension.DeviceArray):
-        # sample_input = self.observation_space.sample()
-        # sample_input = jnp.expand_dims(sample_input, 0)
-        # self.online_params = self.critic_net.init(key, sample_input)
-        # self.target_params = self.online_params.copy()
         sample_input = self.observation_space.sample()
         sample_input = jnp.expand_dims(sample_input, 0)
         online_params = self.critic_net.init(key, sample_input)
@@ -185,15 +181,14 @@ agent = DQNAgent(
 params = agent.init_params(next(key_iter))
 agent.init_optimizer(params)
 buf = ReplayBuffer(capacity=int(1e6))
-step_count = 0
 episode_count = 0
-t0 = time()
 pobs, info = env.reset()
 print(f"initial observation: {pobs}, info: {info}")  # debug
 term, trun = False, False
 rew, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for st in range(60000):
+t0 = time()
+for step_count in range(200000):
     action, q_val, epsilon = agent.make_decision(
         key=next(key_iter),
         params=params,
@@ -207,7 +202,6 @@ for st in range(60000):
     buf.store(pobs, act, rew, term, nobs)
     episodic_return += rew
     pobs = nobs.copy()
-    step_count += 1
     if buf.is_ready(batch_size=1024):
         loss_value, params = agent.update_params(
             params,
@@ -217,10 +211,11 @@ for st in range(60000):
     if term or trun:  # reset env if terminated or truncated
         deposit_return.append(episodic_return)
         averaged_return.append(np.average(deposit_return))
-        print(f"episode: {episode_count+1}, step: {step_count}, epsilon: {epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
+        print(f"episode: {episode_count+1}, step: {step_count+1}, epsilon: {epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
+        print(f"averaged_return: {averaged_return[-1]}\n----\n")
         episode_count += 1
         pobs, _ = env.reset()
         term, trun = False, False
         rew, episodic_return = 0, 0
-plt.plot(averaged_return)
-plt.show()
+t1 = time()
+print(f"time consuming: {t1 - t0}")

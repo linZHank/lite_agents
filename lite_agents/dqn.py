@@ -147,8 +147,8 @@ class DQNAgent:
         env,
         gamma=0.99,
         learning_rate=3e-4,
-        polyak=0.995,
-        update_freq=100,
+        polyak=0,
+        update_freq=50,
     ):
         # env related
         self._env = env
@@ -157,9 +157,9 @@ class DQNAgent:
         # hyperparams
         self.epsilon_decay_schedule = polynomial_schedule(
             init_value=1.0,
-            end_value=0.1,
+            end_value=0.01,
             power=1,
-            transition_steps=400,
+            transition_steps=500,
         )
         # params
         self.gamma = gamma  # discount rate
@@ -172,7 +172,7 @@ class DQNAgent:
         self.target_params = self.online_params.copy()
         # self.targ_q = Critic(dim_obs, num_act, activation)
         self.optimizer = tf.keras.optimizers.Adam(lr=learning_rate)
-        # variable
+        # variables
         self.epsilon = 0.
         self.update_counter = 0
 #
@@ -237,32 +237,32 @@ class DQNAgent:
     #
     #     return loss_q
 
-    # @tf.function
-    def update_params(self, batch):
-        # update target params
+    def update_target_params(self):
         if self.polyak > 0:
             for i in range(len(self.online_params)):
                 self.target_params[i] = (1.0 - self.polyak) * self.online_params[i] \
                     + self.polyak * self.target_params[i]
         else:
-            if not self.update_counter % self.update_freq:
+            if not self.update_counter % self.periodic_update_freq:
                 self.target_params = self.online_params.copy()
-                print(
-                    f"\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget params updated at step: {self.update_counter}\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
-                )
+                # print(
+                #     f"\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget params updated at step: {self.update_counter}\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+                # )
+
+    def update_online_params(self, batch):
         # update online_params
         with tf.GradientTape() as tape:
             tape.watch(self.critic.trainable_weights)
             prev_qvals = self.critic(batch["pobs"])
             prev_qsa = prev_qvals * tf.one_hot(batch["acts"], self._num_acts)
-            with tape.stop_recording():
-                self.critic.set_weights(self.target_params)
-                next_qvals = self.critic(batch["nobs"])
-                self.critic.set_weights(self.online_params)
-                duel_next_qvals = self.critic(batch["nobs"])
-                next_acts = tf.one_hot(tf.argmax(duel_next_qvals, axis=-1), self._num_acts)
-                next_qsa = next_qvals * next_acts
-                target_q = batch["rews"] + batch["disc"] * tf.reduce_sum(next_qsa, axis=-1)
+            # with tape.stop_recording():
+            self.critic.set_weights(self.target_params)
+            next_qvals = self.critic(batch["nobs"])
+            self.critic.set_weights(self.online_params)
+            duel_next_qvals = self.critic(batch["nobs"])
+            next_acts = tf.one_hot(tf.argmax(duel_next_qvals, axis=-1), self._num_acts)
+            next_qsa = next_qvals * next_acts
+            target_q = batch["rews"] + batch["disc"] * tf.reduce_sum(next_qsa, axis=-1)
             pred_q = tf.reduce_sum(prev_qsa, axis=-1)
             td_error = tf.keras.losses.MSE(y_true=target_q, y_pred=pred_q)
         grads = tape.gradient(td_error, self.critic.trainable_weights)
@@ -281,15 +281,14 @@ env = gym.make("LunarLander-v2")  # , render_mode="human")
 # env = gym.make("CartPole-v0")
 agent = DQNAgent(env)
 buf = ReplayBuffer(dim_obs=env.observation_space.shape[0], capacity=int(1e6))
-step_count = 0
 episode_count = 0
-t0 = time()
 pobs, info = env.reset()
 # print(f"initial observation: {pobs}, info: {info}")  # debug
 term, trun = False, False
 rew, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for _ in range(100000):
+t0 = time()
+for step_count in range(200000):
     act, _ = agent.make_decision(
         obs=pobs, 
         episode_count=episode_count,
@@ -300,18 +299,20 @@ for _ in range(100000):
     buf.store(pobs, act, rew, term, nobs)
     episodic_return += rew
     pobs = nobs
-    step_count += 1
     if buf.size > 1024:
-        loss_value = agent.update_params(
+        agent.update_target_params()
+        loss_value = agent.update_online_params(
             buf.sample(batch_size=1024, discount_rate=0.99),
         )
         # print(f"loss: {loss_value}")
     if term or trun:
         deposit_return.append(episodic_return)
         averaged_return.append(np.average(deposit_return))
-        print(f"episode: {episode_count+1}, step: {step_count}, epsilon: {agent._epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
+        print(f"episode: {episode_count+1}, step: {step_count+1}, epsilon: {agent._epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
         print(f"average_return: {averaged_return[-1]} \n----\n")
         episode_count += 1
         pobs, _ = env.reset()
         term, trun = False, False
         rew, episodic_return = 0, 0
+t1 = time()
+print(f"time consuming: {t1 - t0}")
