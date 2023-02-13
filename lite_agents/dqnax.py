@@ -1,65 +1,15 @@
 """A simple double-DQN agent."""
 
 import collections
-import random
 import numpy as np
-
 import jax
 import jax.numpy as jnp
 from jaxlib import xla_extension
 import haiku as hk
 import optax
 import rlax
-
 import matplotlib.pyplot as plt
 
-
-def transformed_mlp(output_size: int, hidden_sizes: list = [128, 128]) -> hk.Transformed:
-    """Factory for a simple MLP network (for approximating Q-values)."""
-
-    def forward(inputs: int):
-        mlp = hk.nets.MLP(hidden_sizes + [output_size])
-
-        return mlp(inputs)
-
-    return hk.without_apply_rng(hk.transform(forward))
-
-
-# class ReplayBuffer(object):
-#     """A simple off-policy replay buffer."""
-#
-#     def __init__(self, capacity):
-#         self.buffer = collections.deque(maxlen=capacity)
-#
-#     def store(self, prev_obs, action, reward, terminated, next_obs):
-#         if action is not None:
-#             self.buffer.append(
-#                 (
-#                     prev_obs,
-#                     action,
-#                     reward,
-#                     terminated,
-#                     next_obs,
-#                 )
-#             )
-#
-#     def sample(self, batch_size, discount_factor):
-#
-#         pobs, acts, rews, terms, nobs = zip(*random.sample(
-#             self.buffer,
-#             batch_size,
-#         ))
-#
-#         return (
-#             np.stack(pobs, dtype=np.float32),
-#             np.asarray(acts, dtype=np.int32),
-#             np.asarray(rews, dtype=np.float32),
-#             (1 - np.asarray(terms, dtype=np.float32)) * discount_factor,
-#             np.stack(nobs, dtype=np.float32),
-#         )
-#
-#     def is_ready(self, batch_size):  # warm up trick
-#         return batch_size <= len(self.buffer)
 
 ################################################################
 class ReplayBuffer:
@@ -67,7 +17,7 @@ class ReplayBuffer:
     A simple FIFO experience replay buffer for DQN agents.
     """
 
-    def __init__(self, dim_obs: int, capacity: int = int(1e4)):
+    def __init__(self, dim_obs: int, capacity: int = int(1e5)):
         self.pobs_buf = np.zeros(shape=(capacity, dim_obs), dtype=np.float32)
         self.acts_buf = np.zeros(shape=capacity, dtype=np.int32)
         self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
@@ -102,7 +52,18 @@ class ReplayBuffer:
 
 
 # Declare DQN agent and trainable parameters
+def transformed_mlp(output_size: int, hidden_sizes: list = [128, 128]) -> hk.Transformed:
+    """Factory for a simple MLP network (for approximating Q-values)."""
+
+    def forward(inputs: int):
+        mlp = hk.nets.MLP(hidden_sizes + [output_size])
+
+        return mlp(inputs)
+
+    return hk.without_apply_rng(hk.transform(forward))
+
 Params = collections.namedtuple("Params", "online, target")
+
 class DQNAgent:
     """A simple DQN agent. Compatible with gym"""
 

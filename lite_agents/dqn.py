@@ -175,13 +175,6 @@ class DQNAgent:
         # variables
         self.epsilon = 0.
         self.update_counter = 0
-#
-#     def linear_epsilon_decay(self, episode, decay_period, warmup_episodes):
-#         episodes_left = decay_period + warmup_episodes - episode
-#         bonus = (self.init_eps - self.final_eps) * episodes_left / decay_period
-#         bonus = np.clip(bonus, 0.0, self.init_eps - self.final_eps)
-#         self.epsilon = self.final_eps + bonus
-#
 
     @tf.function
     def make_decision(self, obs, episode_count, eval_flag):
@@ -198,44 +191,6 @@ class DQNAgent:
                 )
 
         return action, q_vals
-
-    # def update_params(self, data):
-    #     # update critic
-    #     with tf.GradientTape() as tape:
-    #         tape.watch(self.q.trainable_weights)
-    #         pred_qval = tf.math.reduce_sum(
-    #             self.q(data["obs"]) * tf.one_hot(data["act"], self.num_act), axis=-1
-    #         )
-    #         targ_qval = data["rew"] + self.gamma * (
-    #             1 - data["done"]
-    #         ) * tf.math.reduce_sum(
-    #             self.targ_q(data["nobs"])
-    #             * tf.one_hot(
-    #                 tf.math.argmax(self.q(data["nobs"]), axis=1), self.num_act
-    #             ),
-    #             axis=1,
-    #         )  # double DQN trick
-    #         loss_q = tf.keras.losses.MSE(y_true=targ_qval, y_pred=pred_qval)
-    #     logging.debug("q loss: {}".format(loss_q))
-    #     grads = tape.gradient(loss_q, self.q.trainable_weights)
-    #     self.optimizer.apply_gradients(zip(grads, self.q.trainable_weights))
-    #     self.update_counter += 1
-    #     if self.polyak > 0:
-    #         # Polyak average update target Q-nets
-    #         q_weights_update = []
-    #         for w_q, w_targ_q in zip(self.q.get_weights(), self.targ_q.get_weights()):
-    #             w_q_upd = self.polyak * w_targ_q
-    #             w_q_upd = w_q_upd + (1 - self.polyak) * w_q
-    #             q_weights_update.append(w_q_upd)
-    #         self.targ_q.set_weights(q_weights_update)
-    #     else:
-    #         if not self.update_counter % self.update_freq:
-    #             self.targ_q.q_net.set_weights(self.q.q_net.get_weights())
-    #             print(
-    #                 "\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTarget Q-net updated\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
-    #             )
-    #
-    #     return loss_q
 
     def update_target_params(self):
         if self.polyak > 0:
