@@ -67,10 +67,9 @@ class DQNAgent:
 
     def __init__(
         self,
-        # observation_space,
-        # action_space,
         env,
         update_freq,
+        polyak,
         learning_rate,
     ):
         # env related
@@ -84,6 +83,7 @@ class DQNAgent:
             power=1,
             transition_steps=500,
         )
+        self.polyak = polyak
         self.update_freq = update_freq
         self.learning_rate = learning_rate
         # Neural net and optimiser.
@@ -130,11 +130,16 @@ class DQNAgent:
 
         TODO: add polyak update
         """
-        target_params = optax.periodic_update(
-            params.online,
-            params.target,
-            self.update_count,
-            self.update_freq,
+        # target_params = optax.periodic_update(
+        #     params.online,
+        #     params.target,
+        #     self.update_count,
+        #     self.update_freq,
+        # )
+        target_params = optax.incremental_update(
+            new_tensors=params.online,
+            old_tensors=params.target,
+            step_size=1 - self.polyak,
         )
         loss_value, loss_grads = jax.value_and_grad(self.loss_fn)(
             params.online, target_params, batch
@@ -169,6 +174,7 @@ key_iter = hk.PRNGSequence(jax.random.PRNGKey(20))
 env = gym.make("LunarLander-v2")  # , render_mode="human")
 agent = DQNAgent(
     env=env,
+    polyak=0.995,
     update_freq=200,
     learning_rate=1e-4,
 )
