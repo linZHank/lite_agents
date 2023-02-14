@@ -1,5 +1,3 @@
-"""A simple double-DQN agent."""
-
 import collections
 import numpy as np
 import jax
@@ -69,14 +67,16 @@ class DQNAgent:
 
     def __init__(
         self,
-        observation_space,
-        action_space,
-        update_period,
+        # observation_space,
+        # action_space,
+        env,
+        update_freq,
         learning_rate,
     ):
         # env related
-        self.observation_space = observation_space
-        self.action_space = action_space
+        self.env = env
+        self.observation_space = env.observation_space
+        self.action_space = env.action_space
         # hyperparams
         self.epsilon_by_frame = optax.polynomial_schedule(
             init_value=1.0,
@@ -84,10 +84,10 @@ class DQNAgent:
             power=1,
             transition_steps=500,
         )
-        self.update_period = update_period
+        self.update_freq = update_freq
         self.learning_rate = learning_rate
         # Neural net and optimiser.
-        self.critic_net = transformed_mlp(output_size=int(action_space.n))
+        self.critic_net = transformed_mlp(output_size=int(self.action_space.n))
         self.optimizer = optax.adam(learning_rate)
         # variables
         self.update_count = 0
@@ -134,11 +134,8 @@ class DQNAgent:
             params.online,
             params.target,
             self.update_count,
-            self.update_period,
+            self.update_freq,
         )
-        # loss_value, loss_grads = jax.value_and_grad(self.loss_fn)(
-        #     params.online, target_params, *data
-        # )  # but seems jax.grad only compute grads for first explicit arg
         loss_value, loss_grads = jax.value_and_grad(self.loss_fn)(
             params.online, target_params, batch
         )  # but seems jax.grad only compute grads for first explicit arg
@@ -170,18 +167,16 @@ from time import time
 
 key_iter = hk.PRNGSequence(jax.random.PRNGKey(20))
 env = gym.make("LunarLander-v2")  # , render_mode="human")
-# env = gym.make("CartPole-v0")
 agent = DQNAgent(
-    observation_space=env.observation_space,
-    action_space=env.action_space,
-    update_period=50,
-    learning_rate=3e-4,
+    env=env,
+    update_freq=200,
+    learning_rate=1e-4,
 )
 params = agent.init_params(next(key_iter))
 agent.init_optimizer(params)
 buf = ReplayBuffer(dim_obs=env.observation_space.shape[0], capacity=int(1e6))
 episode_count = 0
-pobs, info = env.reset()
+pobs, info = env.reset(seed=20)
 print(f"initial observation: {pobs}, info: {info}")  # debug
 term, trun = False, False
 rew, episodic_return = 0, 0
@@ -213,8 +208,10 @@ for step_count in range(200000):
         print(f"episode: {episode_count+1}, step: {step_count+1}, epsilon: {epsilon} \nepisode return: {episodic_return} \nterminated: {term}, truncated: {trun}")
         print(f"averaged_return: {averaged_return[-1]}\n----\n")
         episode_count += 1
-        pobs, _ = env.reset()
+        pobs, _ = env.reset(seed=20)
         term, trun = False, False
         rew, episodic_return = 0, 0
 t1 = time()
 print(f"time consuming: {t1 - t0}")
+plt.plot(averaged_return)
+plt.show()
