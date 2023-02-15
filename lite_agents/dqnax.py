@@ -97,7 +97,8 @@ class DQNAgent:
         self.opt_state = None
         # Jitting for speed.
         self.make_decision = jax.jit(self.make_decision)
-        self.update_params = jax.jit(self.update_params)
+        self.update_online_params = jax.jit(self.update_online_params)
+        self.update_target_params = jax.jit(self.update_target_params)
 
     def init_params(self, key: xla_extension.DeviceArray):
         sample_input = self.observation_space.sample()
@@ -125,27 +126,33 @@ class DQNAgent:
 
         return action, q_val, epsilon
 
-    def update_params(self, params, batch):
-        """Periodic update online params.
-
-        TODO: add polyak update
+    def update_target_params(self, online_params, target_params):
+        """Trick to stablize Q net
         """
-        # target_params = optax.periodic_update(
-        #     params.online,
-        #     params.target,
-        #     self.update_count,
-        #     self.update_freq,
-        # )
-        target_params = optax.incremental_update(
-            new_tensors=params.online,
-            old_tensors=params.target,
-            step_size=1 - self.polyak,
-        )
+        if 0 < self.polyak < 1:
+            target_params = optax.incremental_update(
+                new_tensors=online_params,
+                old_tensors=target_params,
+                step_size=1 - self.polyak,
+            )
+        else:
+            target_params = optax.periodic_update(
+                online_params,
+                target_params,
+                self.update_count,
+                self.update_freq,
+            )
+
+        return target_params
+
+    def update_online_params(self, online_params, target_params, batch):
+        """Periodic update online params.
+        """
         loss_value, loss_grads = jax.value_and_grad(self.loss_fn)(
-            params.online, target_params, batch
+            online_params, target_params, batch
         )  # but seems jax.grad only compute grads for first explicit arg
         updates, self.opt_state = self.optimizer.update(loss_grads, self.opt_state)
-        online_params = optax.apply_updates(params.online, updates)
+        online_params = optax.apply_updates(online_params, updates)
         self.update_count += 1
 
         return loss_value, Params(online_params, target_params)
@@ -203,8 +210,11 @@ for step_count in range(200000):
     episodic_return += rew
     pobs = nobs.copy()
     if buf.is_ready(batch_size=1024):
-        loss_value, params = agent.update_params(
-            params,
+        online_params, target_params = params.online, params.target
+        target_params = agent.update_target_params(online_params, target_params)
+        loss_value, params = agent.update_online_params(
+            online_params,
+            target_params,
             buf.sample(batch_size=1024, discount_rate=0.99),
         )
         # print(f"loss = {loss_value}")
