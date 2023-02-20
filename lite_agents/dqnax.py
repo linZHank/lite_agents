@@ -59,7 +59,7 @@ def transformed_mlp(output_size: int, hidden_sizes: list = [128, 128]) -> hk.Tra
     return hk.without_apply_rng(hk.transform(forward))
 
 
-Params = collections.namedtuple("Params", "online, target")
+ParamsContainer = collections.namedtuple("Params", "online, target")
 
 
 class DQNAgent:
@@ -106,7 +106,7 @@ class DQNAgent:
         sample_input = jnp.expand_dims(sample_input, 0)
         online_params = self.critic_net.init(key, sample_input)
 
-        return Params(online_params, online_params)
+        return ParamsContainer(online_params, online_params)
 
     def init_optimizer(self, params):
         self.opt_state = self.optimizer.init(params.online)
@@ -156,7 +156,7 @@ class DQNAgent:
         updates, self.opt_state = self.optimizer.update(loss_grads, self.opt_state)
         online_params = optax.apply_updates(online_params, updates)
 
-        return loss_value, Params(online_params, target_params)
+        return loss_value, ParamsContainer(online_params, target_params)
 
     def loss_fn(self, online_params, target_params, data):
         prev_qval = self.critic_net.apply(online_params, data["pobs"])
