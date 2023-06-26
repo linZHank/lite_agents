@@ -22,3 +22,23 @@ class CriticNet(nn.Module):
         x = nn.relu(x)
         logits = nn.Dense(features=self.num_outputs, name='logits')(x)
         return logits
+
+
+if __name__=='__main__':
+    import gymnasium as gym
+    env = gym.make('LunarLander-v2', render_mode='human')
+    s_tm1, info = env.reset()
+    term, trunc = False, False
+    for step in range(1000):
+        a_tm1 = env.action_space.sample()
+        s_t, r_t, term, trunc, info = env.step(a_tm1)
+        print(f"\n---step: {step}---")
+        print(f"state: {s_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {s_t}")
+        s_tm1 = s_t
+        if term or trunc:
+            s_tm1, info = env.reset()
+            term, trunc = False, False
+            print("reset")
+
+
+
