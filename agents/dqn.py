@@ -5,7 +5,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import optax
-# import rlax
+from distrax import Greedy, EpsilonGreedy
 
 
 class QNet(nn.Module):
@@ -42,11 +42,12 @@ class DQNAgent:
             rewrite epsilon greedy w/o rlax
         """
         # state = jnp.expand_dims(state, 0)  # specify batch size
+        key, subkey = jax.random.split(key)
         qvals = jnp.squeeze(self.qnet.apply(params.online, state))
         epsilon = self.epsilon_by_frame(episode_count)
-        # sampled_action = rlax.epsilon_greedy(epsilon).sample(key, qvals)
-        # greedy_action = rlax.greedy().sample(key, qvals)
-        # action = jax.lax.select(eval_flag, greedy_action, sampled_action)
+        sampled_action = distrax.EpsilonGreedy(preferences=qvals, epsilon=epsilon).sample(subkey, qvals)
+        greedy_action = distrax.Greedy(preferences=qvals).sample(subkey, qvals)
+        action = jax.lax.select(eval_flag, greedy_action, sampled_action)
 
         return action, qvals, epsilon
 
@@ -62,16 +63,12 @@ if __name__=='__main__':
     online_params = agent.qnet.init(key, env.observation_space.sample())
     for step in range(1000):
         # a_tm1 = env.action_space.sample()
-        new_key, subkey = jax.random.split(key)
-        del key
         a_tm1, qvals, epsilon = agent.make_decision(
             key=subkey,
             params=online_params,
             state=s_tm1,
             episode_count=episode_count,
         )
-        del subkey
-        key = new_key
 
         s_t, r_t, term, trunc, info = env.step(a_tm1)
         print(f"\n---step: {step}---")
