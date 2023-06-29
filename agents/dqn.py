@@ -29,6 +29,8 @@ class QNet(nn.Module):
 
 
 Params = collections.namedtuple('Params', 'online, target')
+
+
 class DQNAgent:
     """DQN agent template"""
 
@@ -36,35 +38,38 @@ class DQNAgent:
         self.observation_shape = observation_shape
         self.num_actions = num_actions
         self.qnet = QNet(num_outputs=num_actions)
+        self.epsilon_by_frame = optax.polynomial_schedule(
+            init_value=1.0,
+            end_value=0.01,
+            power=1,
+            transition_steps=500,
+        )
 
     def init_params(self, key, sample_obs):
         online_params = self.qnet.init(key, sample_obs)
+        self.params_container = Params(online_params, online_params)
 
-        return Params(online_params, online_params)
+        return self.params_container
 
-    def make_decision(self, key, params, state, episode_count, eval_flag=False):
+    def make_decision(self, key, params, obs, episode_count, eval_flag=False):
         """pi(a|s)
         TODO:
             add warm up
             rewrite epsilon greedy w/o rlax
         """
-        # state = jnp.expand_dims(state, 0)  # specify batch size
-        key, subkey = jax.random.split(key)
-        qvals = jnp.squeeze(self.qnet.apply(params.online, state))
+        key, subkey = jax.random.split(key)  # generate a new key, or sampled action won't change
+        qvals = jnp.squeeze(self.qnet.apply(params, obs))
         epsilon = self.epsilon_by_frame(episode_count)
-        sampled_action = EpsilonGreedy(preferences=qvals, epsilon=epsilon).sample(subkey, qvals)
-        greedy_action = Greedy(preferences=qvals).sample(subkey, qvals)
+        sampled_action = EpsilonGreedy(preferences=qvals, epsilon=epsilon).sample(seed=subkey)
+        greedy_action = Greedy(preferences=qvals).sample(seed=subkey)
         action = jax.lax.select(eval_flag, greedy_action, sampled_action)
 
-        return action, qvals, epsilon
+        return key, action, qvals, epsilon
 
 
 if __name__=='__main__':
     import gymnasium as gym
     env = gym.make('LunarLander-v2')  # , render_mode='human')
-    s_tm1, info = env.reset()
-    term, trunc = False, False
-    episode_count = 0
     agent = DQNAgent(
         observation_shape=env.observation_space.shape,
         num_actions=env.action_space.n
@@ -74,21 +79,23 @@ if __name__=='__main__':
         key=key,
         sample_obs=env.observation_space.sample()
     )
-    # for step in range(1000):
-    #     # a_tm1 = env.action_space.sample()
-    #     a_tm1, qvals, epsilon = agent.make_decision(
-    #         key=subkey,
-    #         params=online_params,
-    #         state=s_tm1,
-    #         episode_count=episode_count,
-    #     )
-    #
-    #     s_t, r_t, term, trunc, info = env.step(a_tm1)
-    #     print(f"\n---step: {step}---")
-    #     print(f"state: {s_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {s_t}")
-    #     s_tm1 = s_t
-    #     if term or trunc:
-    #         s_tm1, info = env.reset()
-    #         term, trunc = False, False
-    #         print("reset")
-    #
+    # init env
+    o_tm1, info = env.reset()
+    term, trunc = False, False
+    episode_count = 0
+    for step in range(1000):
+        key, a_tm1, qvals, epsilon = agent.make_decision(
+            key=key,
+            params=agent.params_container.online,
+            obs=o_tm1,
+            episode_count=episode_count,
+        )
+        o_t, r_t, term, trunc, info = env.step(int(a_tm1))
+        print(f"\n---episode: {episode_count}, step: {step}, epsilon: {epsilon}---")
+        print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
+        o_tm1 = o_t
+        if term or trunc:
+            episode_count += 1
+            o_tm1, info = env.reset()
+            term, trunc = False, False
+            print("reset")
