@@ -32,8 +32,15 @@ Params = collections.namedtuple('Params', 'online, target')
 class DQNAgent:
     """DQN agent template"""
 
-    def __init__(self) -> None:
-        self.qnet = QNet(num_outputs=4)
+    def __init__(self, observation_shape, num_actions) -> None:
+        self.observation_shape = observation_shape
+        self.num_actions = num_actions
+        self.qnet = QNet(num_outputs=num_actions)
+
+    def init_params(self, key, sample_obs):
+        online_params = self.qnet.init(key, sample_obs)
+
+        return Params(online_params, online_params)
 
     def make_decision(self, key, params, state, episode_count, eval_flag=False):
         """pi(a|s)
@@ -45,8 +52,8 @@ class DQNAgent:
         key, subkey = jax.random.split(key)
         qvals = jnp.squeeze(self.qnet.apply(params.online, state))
         epsilon = self.epsilon_by_frame(episode_count)
-        sampled_action = distrax.EpsilonGreedy(preferences=qvals, epsilon=epsilon).sample(subkey, qvals)
-        greedy_action = distrax.Greedy(preferences=qvals).sample(subkey, qvals)
+        sampled_action = EpsilonGreedy(preferences=qvals, epsilon=epsilon).sample(subkey, qvals)
+        greedy_action = Greedy(preferences=qvals).sample(subkey, qvals)
         action = jax.lax.select(eval_flag, greedy_action, sampled_action)
 
         return action, qvals, epsilon
@@ -54,30 +61,34 @@ class DQNAgent:
 
 if __name__=='__main__':
     import gymnasium as gym
-    env = gym.make('LunarLander-v2', render_mode='human')
+    env = gym.make('LunarLander-v2')  # , render_mode='human')
     s_tm1, info = env.reset()
     term, trunc = False, False
     episode_count = 0
-    agent = DQNAgent()
+    agent = DQNAgent(
+        observation_shape=env.observation_space.shape,
+        num_actions=env.action_space.n
+    )
     key = jax.random.PRNGKey(20)
-    online_params = agent.qnet.init(key, env.observation_space.sample())
-    for step in range(1000):
-        # a_tm1 = env.action_space.sample()
-        a_tm1, qvals, epsilon = agent.make_decision(
-            key=subkey,
-            params=online_params,
-            state=s_tm1,
-            episode_count=episode_count,
-        )
-
-        s_t, r_t, term, trunc, info = env.step(a_tm1)
-        print(f"\n---step: {step}---")
-        print(f"state: {s_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {s_t}")
-        s_tm1 = s_t
-        if term or trunc:
-            s_tm1, info = env.reset()
-            term, trunc = False, False
-            print("reset")
-
-
-
+    params = agent.init_params(
+        key=key,
+        sample_obs=env.observation_space.sample()
+    )
+    # for step in range(1000):
+    #     # a_tm1 = env.action_space.sample()
+    #     a_tm1, qvals, epsilon = agent.make_decision(
+    #         key=subkey,
+    #         params=online_params,
+    #         state=s_tm1,
+    #         episode_count=episode_count,
+    #     )
+    #
+    #     s_t, r_t, term, trunc, info = env.step(a_tm1)
+    #     print(f"\n---step: {step}---")
+    #     print(f"state: {s_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {s_t}")
+    #     s_tm1 = s_t
+    #     if term or trunc:
+    #         s_tm1, info = env.reset()
+    #         term, trunc = False, False
+    #         print("reset")
+    #
