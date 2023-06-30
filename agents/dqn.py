@@ -42,8 +42,14 @@ class ReplayBuffer(object):
         acts_samples = self.acts_stash[indices]
         rews_samples = self.rews_stash[indices]
         termsigs_samples = self.termsigs_stash[indices]
-        batched_samples = Batch(pobs_samples, acts_samples, rews_samples, termsigs_samples, nobs_samples)
-        return batched_samples
+        sampled_batch = Batch(
+            pobs_samples,
+            acts_samples,
+            rews_samples,
+            termsigs_samples,
+            nobs_samples
+        )
+        return sampled_batch
 
     def is_ready(self, batch_size):  # warm up trick
         return batch_size <= self.capacity
@@ -82,6 +88,7 @@ class DQNAgent:
             power=1,
             transition_steps=500,
         )
+        self.optimizer = optax.adam(learning_rate=3e-4)
 
     def init_params(self, key, sample_obs):
         online_params = self.qnet.init(key, sample_obs)
@@ -105,16 +112,55 @@ class DQNAgent:
         return key, action, qvals, epsilon
 
 
-if __name__=='__main__':
+    def update_params(self, params, replay_batch):
+        """Periodic update online params.
+
+        TODO: add polyak update
+        """
+        target_params = optax.periodic_update(
+            params.online,
+            params.target,
+            self.update_count,
+            self.update_period,
+        )
+        loss_val, loss_fn_grads = jax.value_and_grad(self.loss_fn)(
+            params.online, params.target, replay_batch
+        )
+        updates, self.opt_state = self.optimizer.update(loss_fn_grads, self.opt_state)
+        online_params = optax.apply_updates(params.online, updates)
+        self.update_count += 1
+
+        return loss_val, Params(online_params, target_params)
+
+    def loss_fn(
+        self,
+        online_params,
+        target_params,
+        replay_batch,
+    ):
+        prev_qval = self.qnet.apply(online_params, replay_batch.pobs)
+        next_qval = self.qnet.apply(target_params, replay_batch.nobs)
+        deul_qval = self.qnet.apply(online_params, replay_batch.nobs)
+
+
+        # batched_loss = jax.vmap(rlax.double_q_learning)
+        # td_error = batched_loss(
+        #     prev_qval, replay_batch.acts, replay_batch.rews, disc_batch, next_qval, deul_qval
+        # )
+        return optax.l2_loss(td_error).mean()
+
+
+if __name__ == '__main__':
     import gymnasium as gym
+    # setup env, agent and replay buffer
     env = gym.make('LunarLander-v2')  # , render_mode='human')
     agent = DQNAgent(
         observation_shape=env.observation_space.shape,
         num_actions=env.action_space.n
     )
-    buf = ReplayBuffer(capacity=int(10), dim_obs=env.observation_space.shape)
+    buf = ReplayBuffer(capacity=int(200), dim_obs=env.observation_space.shape)
     key = jax.random.PRNGKey(20)
-    qnet_params = agent.init_params(
+    params = agent.init_params(
         key=key,
         sample_obs=env.observation_space.sample()
     )
@@ -125,7 +171,7 @@ if __name__=='__main__':
     for step in range(200):
         key, a_tm1, qvals, epsilon = agent.make_decision(
             key=key,
-            params=qnet_params.online,
+            params=params.online,
             obs=o_tm1,
             episode_count=episode_count,
         )
@@ -134,6 +180,8 @@ if __name__=='__main__':
         print(f"\n---episode: {episode_count}, step: {step}, epsilon: {epsilon}---")
         print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
         o_tm1 = o_t
+        if buf.stash_size > 10:
+            loss, params = agent.update_params(params, buf.sample(batch_size=10))
         if term or trunc:
             episode_count += 1
             o_tm1, info = env.reset()
