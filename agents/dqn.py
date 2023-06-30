@@ -1,9 +1,10 @@
 """Class and functions to implement a simple DQN agent"""
 
 from collections import namedtuple
-import flax.linen as nn
+import numpy as np
 import jax
 import jax.numpy as jnp
+import flax.linen as nn
 import optax
 from distrax import Greedy, EpsilonGreedy
 
@@ -16,11 +17,11 @@ class ReplayBuffer(object):
     """A simple off-policy replay buffer."""
 
     def __init__(self, capacity, dim_obs):
-        self.pobs_stash = jnp.zeros(shape=[capacity]+list(dim_obs), dtype=jnp.float32)
-        self.acts_stash = jnp.zeros(shape=capacity, dtype=jnp.float32)
-        self.rews_stash = jnp.zeros(shape=capacity, dtype=jnp.float32)
-        self.nobs_stash = jnp.zeros_like(self.pobs_stash)
-        self.termsigs_stash = jnp.zeros(shape=capacity, dtype=jnp.float32)
+        self.pobs_stash = np.zeros(shape=[capacity]+list(dim_obs), dtype=np.float32)
+        self.acts_stash = np.zeros(shape=capacity, dtype=np.float32)
+        self.rews_stash = np.zeros(shape=capacity, dtype=np.float32)
+        self.nobs_stash = np.zeros_like(self.pobs_stash)
+        self.termsigs_stash = np.zeros(shape=capacity, dtype=np.float32)
         self.loc = 0  # replay instance index
         self.stash_size = 0
         self.capacity = capacity
@@ -34,9 +35,8 @@ class ReplayBuffer(object):
         self.loc = (self.loc + 1) % self.capacity
         self.stash_size = min(self.stash_size + 1, self.capacity)
 
-    def sample(self, key, batch_size, discount_factor=0.99):
-        key, subkey = jax.random.split(key)
-        indices = jax.random.randint(subkey, shape=(batch_size,), minval=0, maxval=self.stash_size)
+    def sample(self, batch_size, discount_factor=0.99):
+        indices = np.random.randint(low=0, high=self.stash_size, size=(batch_size,))
         pobs_samples = self.pobs_stash[indices]
         nobs_samples = self.nobs_stash[indices]
         acts_samples = self.acts_stash[indices]
@@ -130,7 +130,7 @@ if __name__=='__main__':
             episode_count=episode_count,
         )
         o_t, r_t, term, trunc, info = env.step(int(a_tm1))
-        buf.store(prev_obs=o_tm1, action=a_tm1, reward=r_t, terminated=term, next_obs=o_t)
+        buf.store(prev_obs=o_tm1, action=a_tm1, reward=r_t, term_signal=term, next_obs=o_t)
         print(f"\n---episode: {episode_count}, step: {step}, epsilon: {epsilon}---")
         print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
         o_tm1 = o_t
