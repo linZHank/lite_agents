@@ -37,11 +37,11 @@ class ReplayBuffer(object):
 
     def sample(self, batch_size, discount_factor=0.99):
         indices = np.random.randint(low=0, high=self.stash_size, size=(batch_size,))
-        pobs_samples = self.pobs_stash[indices]
-        nobs_samples = self.nobs_stash[indices]
-        acts_samples = self.acts_stash[indices]
-        rews_samples = self.rews_stash[indices]
-        termsigs_samples = self.termsigs_stash[indices]
+        pobs_samples = jnp.asarray(self.pobs_stash[indices]) 
+        nobs_samples = jnp.asarray(self.nobs_stash[indices])
+        acts_samples = jnp.asarray(self.acts_stash[indices])
+        rews_samples = jnp.asarray(self.rews_stash[indices])
+        termsigs_samples = jnp.asarray(self.termsigs_stash[indices])
         sampled_batch = Batch(
             pobs_samples,
             acts_samples,
@@ -112,42 +112,48 @@ class DQNAgent:
         return key, action, qvals, epsilon
 
 
-    def update_params(self, params, replay_batch):
-        """Periodic update online params.
-
-        TODO: add polyak update
-        """
-        target_params = optax.periodic_update(
-            params.online,
-            params.target,
-            self.update_count,
-            self.update_period,
-        )
-        loss_val, loss_fn_grads = jax.value_and_grad(self.loss_fn)(
-            params.online, params.target, replay_batch
-        )
-        updates, self.opt_state = self.optimizer.update(loss_fn_grads, self.opt_state)
-        online_params = optax.apply_updates(params.online, updates)
-        self.update_count += 1
-
-        return loss_val, Params(online_params, target_params)
-
+    # def update_params(self, params, replay_batch):
+    #     """Periodic update online params.
+    #
+    #     TODO: add polyak update
+    #     """
+    #     target_params = optax.periodic_update(
+    #         params.online,
+    #         params.target,
+    #         self.update_count,
+    #         self.update_period,
+    #     )
+    #     loss_val, loss_fn_grads = jax.value_and_grad(self.loss_fn)(
+    #         params.online, params.target, replay_batch
+    #     )
+    #     updates, self.opt_state = self.optimizer.update(loss_fn_grads, self.opt_state)
+    #     online_params = optax.apply_updates(params.online, updates)
+    #     self.update_count += 1
+    #
+    #     return loss_val, Params(online_params, target_params)
+    #
     def loss_fn(
         self,
         online_params,
         target_params,
         replay_batch,
+        discount_rate,
     ):
+        def double_q_loss(r, termsig, gamma, prev_q, prev_act, next_q, duel_next_q):
+            target_q = jax.lax.stop_gradient(
+                r + (1 - termsig) * gamma * next_q[duel_next_q.argmax(axis=-1)]
+            )
+            td_error = target_q - prev_q[int(prev_act)]
+            return td_error
         prev_qval = self.qnet.apply(online_params, replay_batch.pobs)
         next_qval = self.qnet.apply(target_params, replay_batch.nobs)
-        deul_qval = self.qnet.apply(online_params, replay_batch.nobs)
+        duel_qval = self.qnet.apply(online_params, replay_batch.nobs)
 
-
-        # batched_loss = jax.vmap(rlax.double_q_learning)
-        # td_error = batched_loss(
-        #     prev_qval, replay_batch.acts, replay_batch.rews, disc_batch, next_qval, deul_qval
-        # )
-        return optax.l2_loss(td_error).mean()
+        vectorized_double_q_loss = jax.vmap(double_q_loss)
+        td_loss = vectorized_double_q_loss(
+            replay_batch.rews, replay_batch.termsigs, discount_rate, prev_qval, replay_batch.acts, next_qval, duel_qval
+        )
+        return optax.l2_loss(td_loss).mean()
 
 
 if __name__ == '__main__':
@@ -180,8 +186,8 @@ if __name__ == '__main__':
         print(f"\n---episode: {episode_count}, step: {step}, epsilon: {epsilon}---")
         print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
         o_tm1 = o_t
-        if buf.stash_size > 10:
-            loss, params = agent.update_params(params, buf.sample(batch_size=10))
+        # if buf.stash_size > 10:
+        #     loss, params = agent.update_params(params, buf.sample(batch_size=10))
         if term or trunc:
             episode_count += 1
             o_tm1, info = env.reset()
