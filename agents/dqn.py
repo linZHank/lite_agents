@@ -18,7 +18,7 @@ class ReplayBuffer(object):
 
     def __init__(self, capacity, dim_obs):
         self.pobs_stash = np.zeros(shape=[capacity]+list(dim_obs), dtype=np.float32)
-        self.acts_stash = np.zeros(shape=capacity, dtype=np.float32)
+        self.acts_stash = np.zeros(shape=capacity, dtype=int)
         self.rews_stash = np.zeros(shape=capacity, dtype=np.float32)
         self.nobs_stash = np.zeros_like(self.pobs_stash)
         self.termsigs_stash = np.zeros(shape=capacity, dtype=np.float32)
@@ -37,7 +37,7 @@ class ReplayBuffer(object):
 
     def sample(self, batch_size, discount_factor=0.99):
         indices = np.random.randint(low=0, high=self.stash_size, size=(batch_size,))
-        pobs_samples = jnp.asarray(self.pobs_stash[indices]) 
+        pobs_samples = jnp.asarray(self.pobs_stash[indices])
         nobs_samples = jnp.asarray(self.nobs_stash[indices])
         acts_samples = jnp.asarray(self.acts_stash[indices])
         rews_samples = jnp.asarray(self.rews_stash[indices])
@@ -111,7 +111,6 @@ class DQNAgent:
 
         return key, action, qvals, epsilon
 
-
     # def update_params(self, params, replay_batch):
     #     """Periodic update online params.
     #
@@ -131,7 +130,7 @@ class DQNAgent:
     #     self.update_count += 1
     #
     #     return loss_val, Params(online_params, target_params)
-    #
+
     def loss_fn(
         self,
         online_params,
@@ -139,19 +138,25 @@ class DQNAgent:
         replay_batch,
         discount_rate,
     ):
-        def double_q_loss(r, termsig, gamma, prev_q, prev_act, next_q, duel_next_q):
+        def double_q_loss(discounted_rews, pred_q, acts, next_q, duel_q):
             target_q = jax.lax.stop_gradient(
-                r + (1 - termsig) * gamma * next_q[duel_next_q.argmax(axis=-1)]
+                # rew + (1 - termsig) * gamma * next_q[duel_q.argmax(axis=-1)]
+                discounted_rews * next_q[duel_q.argmax(axis=-1)]
             )
-            td_error = target_q - prev_q[int(prev_act)]
+            td_error = target_q - pred_q[acts]
             return td_error
-        prev_qval = self.qnet.apply(online_params, replay_batch.pobs)
+
+        pred_qval = self.qnet.apply(online_params, replay_batch.pobs)
         next_qval = self.qnet.apply(target_params, replay_batch.nobs)
         duel_qval = self.qnet.apply(online_params, replay_batch.nobs)
-
+        discounted_rews = replay_batch.rews * (1 - replay_batch.termsigs) * discount_rate
         vectorized_double_q_loss = jax.vmap(double_q_loss)
         td_loss = vectorized_double_q_loss(
-            replay_batch.rews, replay_batch.termsigs, discount_rate, prev_qval, replay_batch.acts, next_qval, duel_qval
+            discounted_rews,
+            pred_qval,
+            replay_batch.acts,
+            next_qval,
+            duel_qval,
         )
         return optax.l2_loss(td_loss).mean()
 
