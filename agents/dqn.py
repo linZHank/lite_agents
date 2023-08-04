@@ -97,7 +97,7 @@ class DQNAgent:
         # variables
         self.update_count = 0
         # properties
-        self.update_period = 10
+        self.update_period = 50
         # jit for speed
         self.make_decision = jax.jit(self.make_decision)
         self.update_params = jax.jit(self.update_params)
@@ -185,7 +185,7 @@ if __name__ == '__main__':
         observation_shape=env.observation_space.shape,
         num_actions=env.action_space.n
     )
-    buf = ReplayBuffer(capacity=int(200), dim_obs=env.observation_space.shape)
+    buf = ReplayBuffer(capacity=int(1e6), dim_obs=env.observation_space.shape)
     key = jax.random.PRNGKey(20)
     params = agent.init_params(
         key=key,
@@ -195,8 +195,9 @@ if __name__ == '__main__':
     # init env
     o_tm1, info = env.reset()
     term, trunc = False, False
-    episode_count = 0
-    for step in range(200):
+    episode_count, episodic_return = 0, 0
+    deposit_return, averaged_return = [], []
+    for step in range(int(5e5)):
         key, a_tm1, qvals, epsilon = agent.make_decision(
             key=key,
             params=params.online,
@@ -205,14 +206,16 @@ if __name__ == '__main__':
         )
         o_t, r_t, term, trunc, info = env.step(int(a_tm1))
         buf.store(prev_obs=o_tm1, action=a_tm1, reward=r_t, term_signal=term, next_obs=o_t)
-        print(f"\n---episode: {episode_count}, step: {step}, epsilon: {epsilon}---")
+        episodic_return += r_t
+        print(f"\n---episode: {episode_count}, step: {step}, return: {episodic_return}---")
         # print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
         o_tm1 = o_t
-        if buf.buffer_size > 10:
-            batch_loss, params = agent.update_params(params, buf.sample(batch_size=10))
-            print(f"loss: {batch_loss}")
+        if buf.buffer_size > 1024:
+            batch_loss, params = agent.update_params(params, buf.sample(batch_size=1024))
+            # print(f"loss: {batch_loss}")
         if term or trunc:
             episode_count += 1
             o_tm1, info = env.reset()
             term, trunc = False, False
+            episode_count, episodic_return = 0, 0
             print("reset")
