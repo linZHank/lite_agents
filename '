@@ -9,8 +9,7 @@ import optax
 from distrax import Greedy, EpsilonGreedy
 
 
-# Batch = namedtuple('Batch', ['pobs', 'acts', 'rews', 'termsigs', 'nobs'])
-Batch = namedtuple('Batch', ['pobs', 'acts', 'discrews', 'nobs'])
+Batch = namedtuple('Batch', ['pobs', 'acts', 'rews', 'termsigs', 'nobs'])
 Params = namedtuple('Params', 'online, target')
 
 
@@ -21,8 +20,8 @@ class ReplayBuffer(object):
         self.pobs_buf = np.zeros(shape=[capacity]+list(dim_obs), dtype=np.float32)
         self.acts_buf = np.zeros(shape=capacity, dtype=int)
         self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
-        self.nobs_buf = np.zeros_like(self.pobs_buf)
         self.termsigs_buf = np.zeros(shape=capacity, dtype=np.float32)
+        self.nobs_buf = np.zeros_like(self.pobs_buf)
         # variables
         self.loc = 0  # replay instance index
         self.buffer_size = 0
@@ -30,28 +29,28 @@ class ReplayBuffer(object):
         self.capacity = capacity
 
     def store(self, prev_obs, action, reward, term_signal, next_obs):
-        self.pobs_buf[self.loc] = prev_obs
-        self.acts_buf[self.loc] = action
-        self.rews_buf[self.loc] = reward
-        self.nobs_buf[self.loc] = next_obs
-        self.termsigs_buf[self.loc] = term_signal
+        self.pobs_stash[self.loc] = prev_obs
+        self.acts_stash[self.loc] = action
+        self.rews_stash[self.loc] = reward
+        self.nobs_stash[self.loc] = next_obs
+        self.termsigs_stash[self.loc] = term_signal
         self.loc = (self.loc + 1) % self.capacity
         self.buffer_size = min(self.buffer_size + 1, self.capacity)
 
     def sample(self, batch_size, discount_factor=0.99):
-        indices = np.random.randint(low=0, high=self.buffer_size, size=(batch_size,))
-        pobs_samples = jnp.asarray(self.pobs_buf[indices])
-        nobs_samples = jnp.asarray(self.nobs_buf[indices])
-        acts_samples = jnp.asarray(self.acts_buf[indices])
-        rews_samples = jnp.asarray(self.rews_buf[indices])
-        termsigs_samples = jnp.asarray(self.termsigs_buf[indices])
+        indices = np.random.randint(low=0, high=self.stash_size, size=(batch_size,))
+        pobs_samples = jnp.asarray(self.pobs_stash[indices])
+        nobs_samples = jnp.asarray(self.nobs_stash[indices])
+        acts_samples = jnp.asarray(self.acts_stash[indices])
+        rews_samples = jnp.asarray(self.rews_stash[indices])
+        termsigs_samples = jnp.asarray(self.termsigs_stash[indices])
         drews_samples = rews_samples * (1 - termsigs_samples) * discount_factor
         sampled_batch = Batch(
             pobs_samples,
             acts_samples,
             # rews_samples,
             # termsigs_samples,
-            drews_samples,  # discounted rewards
+            drews_samples,
             nobs_samples
         )
         return sampled_batch
@@ -94,22 +93,12 @@ class DQNAgent:
             transition_steps=500,
         )
         self.optimizer = optax.adam(learning_rate=3e-4)
-        # variables
-        self.update_count = 0
-        # properties
-        self.update_period = 10
-        # jit for speed
-        self.make_decision = jax.jit(self.make_decision)
-        self.update_params = jax.jit(self.update_params)
 
     def init_params(self, key, sample_obs):
         online_params = self.qnet.init(key, sample_obs)
         params = Params(online_params, online_params)
 
         return params
-
-    def init_optmizer(self, init_params):
-        self.opt_state = self.optimizer.init(init_params)
 
     def make_decision(self, key, params, obs, episode_count, eval_flag=False):
         """pi(a|s)
@@ -137,10 +126,10 @@ class DQNAgent:
             self.update_count,
             self.update_period,
         )
-        loss_val, grads = jax.value_and_grad(self.loss_fn)(
+        loss_val, loss_fn_grads = jax.value_and_grad(self.loss_fn)(
             params.online, params.target, replay_batch
         )
-        updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        updates, self.opt_state = self.optimizer.update(loss_fn_grads, self.opt_state)
         online_params = optax.apply_updates(params.online, updates)
         self.update_count += 1
 
@@ -151,12 +140,12 @@ class DQNAgent:
         online_params,
         target_params,
         replay_batch,
-        # discount_rate,
+        discount_rate,
     ):
-        def double_q_loss(discrews, acts, pred_q, next_q, duel_q):
+        def double_q_loss(discounted_rews, pred_q, acts, next_q, duel_q):
             target_q = jax.lax.stop_gradient(
                 # rew + (1 - termsig) * gamma * next_q[duel_q.argmax(axis=-1)]
-                discrews * next_q[duel_q.argmax(axis=-1)]
+                discounted_rews * next_q[duel_q.argmax(axis=-1)]
             )
             td_error = target_q - pred_q[acts]
             return td_error
@@ -164,13 +153,12 @@ class DQNAgent:
         pred_qval = self.qnet.apply(online_params, replay_batch.pobs)
         next_qval = self.qnet.apply(target_params, replay_batch.nobs)
         duel_qval = self.qnet.apply(online_params, replay_batch.nobs)
-        # discounted_rews = replay_batch.rews * (1 - replay_batch.termsigs) * discount_rate
+        discounted_rews = replay_batch.rews * (1 - replay_batch.termsigs) * discount_rate
         vectorized_double_q_loss = jax.vmap(double_q_loss)
         td_loss = vectorized_double_q_loss(
-            # discounted_rews,
-            replay_batch.discrews,
-            replay_batch.acts,
+            discounted_rews,
             pred_qval,
+            replay_batch.acts,
             next_qval,
             duel_qval,
         )
@@ -191,7 +179,6 @@ if __name__ == '__main__':
         key=key,
         sample_obs=env.observation_space.sample()
     )
-    agent.init_optmizer(params.online)
     # init env
     o_tm1, info = env.reset()
     term, trunc = False, False
@@ -206,11 +193,10 @@ if __name__ == '__main__':
         o_t, r_t, term, trunc, info = env.step(int(a_tm1))
         buf.store(prev_obs=o_tm1, action=a_tm1, reward=r_t, term_signal=term, next_obs=o_t)
         print(f"\n---episode: {episode_count}, step: {step}, epsilon: {epsilon}---")
-        # print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
+        print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
         o_tm1 = o_t
-        if buf.buffer_size > 10:
-            batch_loss, params = agent.update_params(params, buf.sample(batch_size=10))
-            print(f"loss: {batch_loss}")
+        if buf.stash_size > 10:
+            loss, params = agent.update_params(params, buf.sample(batch_size=10))
         if term or trunc:
             episode_count += 1
             o_tm1, info = env.reset()
