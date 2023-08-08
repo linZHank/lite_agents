@@ -9,7 +9,6 @@ import optax
 from distrax import Greedy, EpsilonGreedy
 
 
-# Batch = namedtuple('Batch', ['pobs', 'acts', 'rews', 'termsigs', 'nobs'])
 Batch = namedtuple('Batch', ['pobs', 'acts', 'discrews', 'nobs'])
 Params = namedtuple('Params', 'online, target')
 
@@ -83,7 +82,15 @@ class QNet(nn.Module):
 class DQNAgent:
     """DQN agent template"""
 
-    def __init__(self, observation_shape, num_actions) -> None:
+    def __init__(
+        self,
+        observation_shape: tuple,
+        num_actions: int,
+        key: int = 123,
+        epsilon_transition_episodes: int = 500,
+        learning_rate: float = 1e-4,
+        target_update_period: int = 100,
+    ):
         self.observation_shape = observation_shape
         self.num_actions = num_actions
         self.qnet = QNet(num_outputs=num_actions)
@@ -91,19 +98,20 @@ class DQNAgent:
             init_value=1.0,
             end_value=0.01,
             power=1,
-            transition_steps=500,
+            transition_steps=epsilon_transition_episodes,
         )
-        self.optimizer = optax.adam(learning_rate=3e-4)
+        self.optimizer = optax.adam(learning_rate=learning_rate)
         # variables
         self.update_count = 0
         # properties
-        self.update_period = 50
+        self.key = jax.random.PRNGKey(key)
+        self.update_period = target_update_period
         # jit for speed
         self.make_decision = jax.jit(self.make_decision)
         self.update_params = jax.jit(self.update_params)
 
-    def init_params(self, key, sample_obs):
-        online_params = self.qnet.init(key, sample_obs)
+    def init_params(self, sample_obs):
+        online_params = self.qnet.init(self.key, sample_obs)
         params = Params(online_params, online_params)
 
         return params
@@ -111,20 +119,19 @@ class DQNAgent:
     def init_optmizer(self, init_params):
         self.opt_state = self.optimizer.init(init_params)
 
-    def make_decision(self, key, params, obs, episode_count, eval_flag=False):
+    def make_decision(self, params, obs, episode_count, eval_flag=False):
         """pi(a|s)
         TODO:
             add warm up
-            rewrite epsilon greedy w/o rlax
         """
-        key, subkey = jax.random.split(key)  # generate a new key, or sampled action won't change
+        self.key, subkey = jax.random.split(self.key)  # generate a new key, or sampled action won't change
         qvals = jnp.squeeze(self.qnet.apply(params, obs))
         epsilon = self.epsilon_by_frame(episode_count)
         sampled_action = EpsilonGreedy(preferences=qvals, epsilon=epsilon).sample(seed=subkey)
         greedy_action = Greedy(preferences=qvals).sample(seed=subkey)
         action = jax.lax.select(eval_flag, greedy_action, sampled_action)
 
-        return key, action, qvals, epsilon
+        return action, qvals, epsilon
 
     def update_params(self, params, replay_batch):
         """Periodic update online params.
@@ -179,27 +186,24 @@ class DQNAgent:
 
 if __name__ == '__main__':
     import gymnasium as gym
+    import matplotlib.pyplot as plt
     # setup env, agent and replay buffer
     env = gym.make('LunarLander-v2')  # , render_mode='human')
     agent = DQNAgent(
         observation_shape=env.observation_space.shape,
-        num_actions=env.action_space.n
+        num_actions=env.action_space.n,
+        key=0,
     )
     buf = ReplayBuffer(capacity=int(1e6), dim_obs=env.observation_space.shape)
-    key = jax.random.PRNGKey(20)
-    params = agent.init_params(
-        key=key,
-        sample_obs=env.observation_space.sample()
-    )
+    params = agent.init_params(sample_obs=env.observation_space.sample())
     agent.init_optmizer(params.online)
     # init env
     o_tm1, info = env.reset()
     term, trunc = False, False
     episode_count, episodic_return = 0, 0
     deposit_return, averaged_return = [], []
-    for step in range(int(5e5)):
-        key, a_tm1, qvals, epsilon = agent.make_decision(
-            key=key,
+    for step in range(int(3e5)):
+        a_tm1, qvals, epsilon = agent.make_decision(
             params=params.online,
             obs=o_tm1,
             episode_count=episode_count,
@@ -207,15 +211,36 @@ if __name__ == '__main__':
         o_t, r_t, term, trunc, info = env.step(int(a_tm1))
         buf.store(prev_obs=o_tm1, action=a_tm1, reward=r_t, term_signal=term, next_obs=o_t)
         episodic_return += r_t
-        print(f"\n---episode: {episode_count}, step: {step}, return: {episodic_return}---")
+        # print(f"\n---episode: {episode_count}, step: {step}, return: {episodic_return}---")
         # print(f"state: {o_tm1}\naction: {a_tm1}\nreward: {r_t}\nterminated? {term}\ntruncated? {trunc}\ninfo: {info}\nnext state: {o_t}")
         o_tm1 = o_t
-        if buf.buffer_size > 1024:
-            batch_loss, params = agent.update_params(params, buf.sample(batch_size=1024))
+        if buf.buffer_size > 2048:
+            batch_loss, params = agent.update_params(params, buf.sample(batch_size=2048))
             # print(f"loss: {batch_loss}")
         if term or trunc:
             episode_count += 1
+            deposit_return.append(episodic_return)
+            averaged_return.append(sum(deposit_return) / episode_count)
+            print(f"\n---episode: {episode_count}, steps: {step}, epsilon: {epsilon}, average return: {averaged_return[-1]}---\n")
             o_tm1, info = env.reset()
             term, trunc = False, False
-            episode_count, episodic_return = 0, 0
+            episodic_return = 0
             print("reset")
+    plt.plot(averaged_return)
+    plt.show()
+    # validation
+    env = gym.make('LunarLander-v2', render_mode='human')
+    o_tm1, info = env.reset()
+    term, trunc = False, False
+    for _ in range(1000):
+        a_tm1, qvals, epsilon = agent.make_decision(
+            params=params.online,
+            obs=o_tm1,
+            episode_count=episode_count,
+            eval_flag=True,
+        )
+        o_t, r_t, term, trunc, info = env.step(int(a_tm1))
+        if term or trunc:
+            break
+
+
