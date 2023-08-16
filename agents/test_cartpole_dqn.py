@@ -8,10 +8,14 @@ env = gym.make('CartPole-v1')  # , render_mode='human')
 agent = DQNAgent(
     obs_shape=env.observation_space.shape,
     num_actions=env.action_space.n,
+    hidden_sizes=[64, 64],
+    epsilon_transition_episodes=200,
+    learning_rate=3e-4,
+    polyak_step_size=0.005,
 )
 buf = ReplayBuffer(capacity=int(1e5), dim_obs=env.observation_space.shape)
 # init params and optimizer
-key = jax.random.PRNGKey(123)
+key = jax.random.PRNGKey(20)
 qnet_params = agent.init_params(key, env.observation_space.sample())
 opt_state = agent.init_optmizer(qnet_params.online)
 # init env
@@ -19,7 +23,7 @@ pobs, _ = env.reset()
 term, trunc = False, False
 episode_count, episodic_return = 0, 0
 deposit_return, averaged_return = [], []
-for step in range(int(1e5)):
+for step in range(int(5e4)):
     key, act, qvals, epsilon = agent.make_decision(
         key=key,
         params=qnet_params.online,

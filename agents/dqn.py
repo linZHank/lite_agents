@@ -59,10 +59,11 @@ class ReplayBuffer(object):
         return batch_size <= self.capacity
 
 
-class QNet(nn.Module):
+class TwoLayerNet(nn.Module):
     "Q-Net template"
 
     num_outputs: int
+    hidden_sizes: list
 
     @nn.compact
     def __call__(self, inputs):
@@ -70,11 +71,16 @@ class QNet(nn.Module):
 
         Network is used to estimate values of state-action pairs
         """
+        # x = inputs.astype(jnp.float32)
+        # x = nn.Dense(features=self.layer_size, name='dense1')(x)
+        # x = nn.relu(x)
+        # x = nn.Dense(features=self.layer_size, name='dense2')(x)
+        # x = nn.relu(x)
+        # logits = nn.Dense(features=self.num_outputs, name='logits')(x)
         x = inputs.astype(jnp.float32)
-        x = nn.Dense(features=256, name='dense1')(x)
-        x = nn.relu(x)
-        x = nn.Dense(features=256, name='dense2')(x)
-        x = nn.relu(x)
+        for size in self.hidden_sizes:
+            x = nn.Dense(features=size)(x)
+            x = nn.relu(x)
         logits = nn.Dense(features=self.num_outputs, name='logits')(x)
         return logits
 
@@ -86,12 +92,13 @@ class DQNAgent:
         self,
         obs_shape,
         num_actions,
-        epsilon_transition_episodes=700,
-        learning_rate=2e-4,
+        hidden_sizes=[128, 128],
+        epsilon_transition_episodes=500,
+        learning_rate=3e-4,
         target_update_period=100,
-        polyak_step_size=0.003,
+        polyak_step_size=0.005,
     ):
-        self.qnet = QNet(num_outputs=num_actions)
+        self.qnet = TwoLayerNet(num_actions, hidden_sizes=hidden_sizes)
         self.epsilon_by_frame = optax.polynomial_schedule(
             init_value=1.0,
             end_value=0.01,
@@ -104,6 +111,7 @@ class DQNAgent:
         # properties
         self.obs_shape = obs_shape
         self.num_actions = num_actions
+        self.hidden_sizes = hidden_sizes
         self.update_period = target_update_period
         self.polyak_step_size = polyak_step_size
         # jit for speed
@@ -200,10 +208,14 @@ if __name__ == '__main__':
     agent = DQNAgent(
         obs_shape=env.observation_space.shape,
         num_actions=env.action_space.n,
+        hidden_sizes=[256, 256],
+        epsilon_transition_episodes=1000,
+        learning_rate=1e-4,
+        polyak_step_size=0.002,
     )
     buf = ReplayBuffer(capacity=int(1e6), dim_obs=env.observation_space.shape)
     # init params and optimizer
-    key = jax.random.PRNGKey(123)
+    key = jax.random.PRNGKey(20)
     qnet_params = agent.init_params(key, env.observation_space.sample())
     opt_state = agent.init_optmizer(qnet_params.online)
     # init env
