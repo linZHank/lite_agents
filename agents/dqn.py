@@ -203,17 +203,17 @@ class DQNAgent:
 if __name__ == '__main__':
     import gymnasium as gym
     import matplotlib.pyplot as plt
-    # setup env, agent and replay buffer
-    env = gym.make('LunarLander-v2')  # , render_mode='human')
+
+    env = gym.make('CartPole-v1')  # , render_mode='human')
     agent = DQNAgent(
         obs_shape=env.observation_space.shape,
         num_actions=env.action_space.n,
-        hidden_sizes=[256, 256],
-        epsilon_transition_episodes=1000,
-        learning_rate=1e-4,
-        polyak_step_size=0.002,
+        hidden_sizes=[64, 64],
+        epsilon_transition_episodes=200,
+        learning_rate=3e-4,
+        polyak_step_size=0.005,
     )
-    buf = ReplayBuffer(capacity=int(1e6), dim_obs=env.observation_space.shape)
+    buf = ReplayBuffer(capacity=int(1e5), dim_obs=env.observation_space.shape)
     # init params and optimizer
     key = jax.random.PRNGKey(20)
     qnet_params = agent.init_params(key, env.observation_space.sample())
@@ -223,7 +223,7 @@ if __name__ == '__main__':
     term, trunc = False, False
     episode_count, episodic_return = 0, 0
     deposit_return, averaged_return = [], []
-    for step in range(int(4e5)):
+    for step in range(int(5e4)):
         key, act, qvals, epsilon = agent.make_decision(
             key=key,
             params=qnet_params.online,
@@ -249,7 +249,7 @@ if __name__ == '__main__':
             episodic_return = 0
             print("reset")
     # validation
-    env = gym.make('LunarLander-v2', render_mode='human')
+    env = gym.make('CartPole-v1', render_mode='human')
     pobs, _ = env.reset()
     term, trunc = False, False
     for _ in range(1000):
@@ -268,5 +268,4 @@ if __name__ == '__main__':
     env.close()
     plt.plot(averaged_return)
     plt.show()
-
 
