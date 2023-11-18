@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "lite_agents"
+version = "0.0.1"
+authors = [
+  { name="pbd0", email="linzhank@gmail.com" },
+]
+description = "A lite-weight implementation of RL algorithms"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GPL3 License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy >=1.21.0",
+    "jax >=0.4.13",
+    "flax >=0.6.11",
+    "distrax >=0.1.4",
+    "optax >=0.1.5",
+    "matplotlib >=3.7.2",
+    "gymnasium >=0.28.1",
+]
+[project.urls]
+Homepage = "https://github.com/linzhank/lite_agents"
+Issues = "https://github.com/linzhank/lite_agents/issues"
