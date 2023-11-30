@@ -1,6 +1,5 @@
-from lite_agents.dqn import MLP
-import jax.numpy as jnp
 import jax
+from lite_agents.dqn import MLP
 
 
 key = jax.random.PRNGKey(19)
