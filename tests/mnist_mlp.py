@@ -72,7 +72,7 @@ print(model.tabulate(
 
 def create_train_state(model, rng, learning_rate, momentum):
     """Creates an initial `TrainState`."""
-    params = model.init(rng, jnp.ones([1, 28, 28, 1]))['params'] # initialize parameters by passing a template image
+    params = model.init(rng, jnp.ones([1, 1, 28, 28]))['params']  # initialize parameters by passing a template image
     tx = optax.sgd(learning_rate, momentum)
     state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
@@ -99,29 +99,37 @@ def train_step(state, batch):
 def train_epoch(dataloader, state, print_every=100):
     batch = {}
     losses = []
+    accuracies = []
     for step, (X, y) in enumerate(dataloader):
-        # batch['image'] = jnp.array(X.numpy())
-        # batch['label'] = jnp.array(y.numpy())
         batch['image'] = jnp.array(X)
         batch['label'] = jnp.array(y)
         state, loss = train_step(state, batch)
         losses.append(loss)
+        logits = state.apply_fn({'params': state.params}, batch['image'])
+        pred = logits.argmax(axis=-1)
+        acc = jnp.sum(pred == batch['label']) / batch['label'].size
+        accuracies.append(acc)
         if not (step + 1) % print_every:
-            print(f"batch {step+1} train loss: {loss}")
+            print(f"batch {step+1} train loss: {loss}, train accuracy:{acc}")
 
-    return state, losses
+    return state, losses, accuracies
 
 
 def test_epoch(dataloader, state):
     batch = {}
     losses = []
+    accuracies = []
     for _, (X, y) in enumerate(dataloader):
         batch['image'] = jnp.array(X)
         batch['label'] = jnp.array(y)
         loss = loss_fn(state.params, batch)
         losses.append(loss)
+        logits = state.apply_fn({'params': state.params}, batch['image'])
+        pred = logits.argmax(axis=-1)
+        acc = jnp.sum(pred == batch['label']) / batch['label'].size
+        accuracies.append(acc)
 
-    return losses
+    return losses, accuracies
 
 
 # SETUP
@@ -134,10 +142,13 @@ num_steps_per_epoch = len(loader_train)
 
 # LOOP
 for i in range(NUM_EPOCHS):
-    state, losses_train = train_epoch(loader_train, state)
+    state, losses_train, accuracies_train = train_epoch(loader_train, state)
     epoch_loss_train = sum(losses_train) / len(losses_train)
-    losses_test = test_epoch(loader_test, state)
+    epoch_acc_train = sum(accuracies_train) / len(accuracies_train)
+    losses_test, accuracies_test = test_epoch(loader_test, state)
     epoch_loss_test = sum(losses_test) / len(losses_test)
-    print(f"---\nepoch {i+1} training loss: {epoch_loss_train}; test loss: {epoch_loss_test}\n---")
+    epoch_acc_test = sum(accuracies_test) / len(accuracies_test)
+    print(f"---\nepoch {i+1} training loss: {epoch_loss_train}; training accuracy: {epoch_acc_train}")
+    print(f"epoch {i+1} test loss: {epoch_loss_test}; test accuracy: {epoch_acc_test}\n---")
 
 
