@@ -64,16 +64,15 @@ class MLP(nn.Module):
 
     @nn.compact
     def __call__(self, inputs):
-        """Define the basic MLP network architecture
+        """Forward pass
 
-        Network is used to estimate values of state-action pairs
         """
         dtype = jnp.float32
-        x = inputs.astype(dtype)
+        X = inputs.astype(dtype)
         for i, size in enumerate(self.hidden_sizes):
-            x = nn.Dense(features=size, name='hidden'+str(i+1), dtype=dtype)(x)
-            x = nn.relu(x)
-        logits = nn.Dense(features=self.num_outputs, name='logits')(x)
+            Z = nn.Dense(features=size, name='hidden'+str(i+1), dtype=dtype)(X)
+            X = nn.relu(Z)
+        logits = nn.Dense(features=self.num_outputs, name='logits')(X)
         return logits
 
 
@@ -82,14 +81,19 @@ class DQNAgent:
 
     """
     def __init__(self, obs_shape, num_actions, hidden_sizes,) -> None:
-        pass
+        self.qnet_online = MLP(num_actions, hidden_sizes)
+
 
 if __name__ == '__main__':
     import gymnasium as gym
     env = gym.make('CartPole-v1')
-    model = MLP(num_outputs=env.action_space.n, hidden_sizes=[5, 3])
+    agent = DQNAgent(
+        env.observation_space.shape,
+        env.action_space.n,
+        (5, 3),
+    )
     print(
-        model.tabulate(
+        agent.qnet_online.tabulate(
             jax.random.key(0),
             env.observation_space.sample(),
             compute_flops=True,
