@@ -1,5 +1,6 @@
 from collections import namedtuple
 import numpy as np
+import jax
 import jax.numpy as jnp
 import flax.linen as nn
 
@@ -54,7 +55,9 @@ class ReplayBuffer(object):
 
 
 class MLP(nn.Module):
-    "Q-Net template"
+    """Multi-Layer Perceptron model
+
+    """
 
     num_outputs: int
     hidden_sizes: list
@@ -65,12 +68,6 @@ class MLP(nn.Module):
 
         Network is used to estimate values of state-action pairs
         """
-        # x = inputs.astype(jnp.float32)
-        # x = nn.Dense(features=self.layer_size, name='dense1')(x)
-        # x = nn.relu(x)
-        # x = nn.Dense(features=self.layer_size, name='dense2')(x)
-        # x = nn.relu(x)
-        # logits = nn.Dense(features=self.num_outputs, name='logits')(x)
         dtype = jnp.float32
         x = inputs.astype(dtype)
         for i, size in enumerate(self.hidden_sizes):
@@ -78,4 +75,25 @@ class MLP(nn.Module):
             x = nn.relu(x)
         logits = nn.Dense(features=self.num_outputs, name='logits')(x)
         return logits
+
+
+class DQNAgent:
+    """RL agent powered by Deep-Q Network
+
+    """
+    def __init__(self, obs_shape, num_actions, hidden_sizes,) -> None:
+        pass
+
+if __name__ == '__main__':
+    import gymnasium as gym
+    env = gym.make('CartPole-v1')
+    model = MLP(num_outputs=env.action_space.n, hidden_sizes=[5, 3])
+    print(
+        model.tabulate(
+            jax.random.key(0),
+            env.observation_space.sample(),
+            compute_flops=True,
+            compute_vjp_flops=True
+        )
+    )
 
