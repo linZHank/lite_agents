@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 from flax.training import train_state
 import optax
+from distrax import Greedy, EpsilonGreedy
 
 
 Batch = namedtuple('Batch', ['pobs', 'acts', 'discrews', 'nobs'])
@@ -82,29 +83,54 @@ class DQNAgent:
     """RL agent powered by Deep-Q Network
 
     """
-    def __init__(self, key_id, obs_shape, num_actions, hidden_sizes,):
-        self.key = jax.random.PRNGKey(key_id)
+    def __init__(self, seed, obs_shape, num_actions, hidden_sizes,):
+        self.key = jax.random.PRNGKey(seed)
         self.qnet = MLP(num_actions, hidden_sizes)
         self.params_online = self.qnet.init(
             self.key,
             jnp.expand_dims(jnp.ones(obs_shape), axis=0)
         )['params']
         # self.params_target = self.params_online.copy()
-        self.lr_schedule = optax.linear_schedule(
+        self.epsilon_schedule = optax.linear_schedule(
             init_value=1.0,
             end_value=0.01,
             transition_steps=100,
             transition_begin=10
         )
-        self.tx = optax.adam(self.lr_schedule)
-        self.state_train = train_state.TrainState.create(
+        # self.lr_schedule = optax.linear_schedule(
+        #     init_value=3e-4,
+        #     end_value=1e-4,
+        #     transition_steps=10000,
+        # )
+        self.lr = 1e-4
+        self.tx = optax.adam(self.lr)
+        self.state = train_state.TrainState.create(
           apply_fn=self.qnet.apply,
           params=self.params_online,
           tx=self.tx,
         )
 
-    def make_decision(self, eval=True):
-        pass
+        # Jitted methods
+        self.value_fn = jax.jit(self.state.apply_fn)
+
+    def make_decision(self, episode_count, obs, eval_flag=True):
+        self.key, subkey = jax.random.split(self.key)
+        epsilon = self.epsilon_schedule(episode_count)
+        qvals = self.value_fn(
+            {'params': self.state.params},
+            obs
+        ).squeeze(axis=0)
+        act_g = Greedy(preferences=qvals).sample(seed=subkey)  # greedy action
+        act_s = EpsilonGreedy(
+            preferences=qvals,
+            epsilon=epsilon).sample(seed=subkey)  # sampled action
+        action = jax.lax.select(
+            pred=eval_flag,
+            on_true=act_g,
+            on_false=act_s,
+        )
+
+        return action
 
 
 
@@ -127,9 +153,13 @@ if __name__ == '__main__':
         )
     )  # log network details
     # Train agent
-    # obs, info = env.reset()
-    # for step in range(1000):
-    #     act = agent.make_decision()
-    #     env.step(act)
+    o, i = env.reset()
+    for _ in range(1000):
+        a = agent.make_decision(1, jnp.expand_dims(o, axis=0), eval_flag=False)
+        print(a)
+        o, r, t, tr, i = env.step(int(a))
+        if t:
+            break
+    env.close()
 
 
