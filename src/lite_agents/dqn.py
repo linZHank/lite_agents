@@ -3,6 +3,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
+from flax.training import train_state
+import optax
 
 
 Batch = namedtuple('Batch', ['pobs', 'acts', 'discrews', 'nobs'])
@@ -80,24 +82,54 @@ class DQNAgent:
     """RL agent powered by Deep-Q Network
 
     """
-    def __init__(self, obs_shape, num_actions, hidden_sizes,) -> None:
-        self.qnet_online = MLP(num_actions, hidden_sizes)
+    def __init__(self, key_id, obs_shape, num_actions, hidden_sizes,):
+        self.key = jax.random.PRNGKey(key_id)
+        self.qnet = MLP(num_actions, hidden_sizes)
+        self.params_online = self.qnet.init(
+            self.key,
+            jnp.expand_dims(jnp.ones(obs_shape), axis=0)
+        )['params']
+        # self.params_target = self.params_online.copy()
+        self.lr_schedule = optax.linear_schedule(
+            init_value=1.0,
+            end_value=0.01,
+            transition_steps=100,
+            transition_begin=10
+        )
+        self.tx = optax.adam(self.lr_schedule)
+        self.state_train = train_state.TrainState.create(
+          apply_fn=self.qnet.apply,
+          params=self.params_online,
+          tx=self.tx,
+        )
+
+    def make_decision(self, eval=True):
+        pass
+
 
 
 if __name__ == '__main__':
     import gymnasium as gym
-    env = gym.make('CartPole-v1')
+    # Create env, agent
+    env = gym.make('CartPole-v1', render_mode='human')
     agent = DQNAgent(
+        0,
         env.observation_space.shape,
         env.action_space.n,
         (5, 3),
     )
     print(
-        agent.qnet_online.tabulate(
+        agent.qnet.tabulate(
             jax.random.key(0),
             env.observation_space.sample(),
             compute_flops=True,
             compute_vjp_flops=True
         )
-    )
+    )  # log network details
+    # Train agent
+    # obs, info = env.reset()
+    # for step in range(1000):
+    #     act = agent.make_decision()
+    #     env.step(act)
+
 
