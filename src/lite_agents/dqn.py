@@ -14,34 +14,36 @@ Batch = namedtuple('Batch', ['pobs', 'acts', 'discrews', 'nobs'])
 class ReplayBuffer(object):
     """A simple off-policy replay buffer."""
 
-    def __init__(self, capacity, dim_obs):
-        self.pobs_buf = np.zeros(shape=[capacity]+list(dim_obs), dtype=np.float32)
+    def __init__(self, capacity, obs_shape):
+        self.pobs_buf = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
         self.acts_buf = np.zeros(shape=capacity, dtype=int)
         self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
         self.nobs_buf = np.zeros_like(self.pobs_buf)
-        self.termsigs_buf = np.zeros(shape=capacity, dtype=np.float32)
+        self.term_buf = np.zeros(shape=capacity, dtype=np.float32)
+        self.sampled_batch = namedtuple('Replay_Sample', 'pobs, acts, rews, terms, nobs')
         # variables
         self.loc = 0  # replay instance index
         self.buffer_size = 0
         # property
         self.capacity = capacity
 
-    def store(self, prev_obs, action, reward, term_signal, next_obs):
+    def store(self, prev_obs, action, reward, term_flag, next_obs):
         self.pobs_buf[self.loc] = prev_obs
         self.acts_buf[self.loc] = action
         self.rews_buf[self.loc] = reward
+        self.term_buf[self.loc] = term_flag
         self.nobs_buf[self.loc] = next_obs
-        self.termsigs_buf[self.loc] = term_signal
         self.loc = (self.loc + 1) % self.capacity
         self.buffer_size = min(self.buffer_size + 1, self.capacity)
+        self.loc += 1
 
     def sample(self, batch_size, discount_factor=0.99):
         indices = np.random.randint(low=0, high=self.buffer_size, size=(batch_size,))
-        pobs_samples = jnp.asarray(self.pobs_buf[indices])
-        nobs_samples = jnp.asarray(self.nobs_buf[indices])
-        acts_samples = jnp.asarray(self.acts_buf[indices])
-        rews_samples = jnp.asarray(self.rews_buf[indices])
-        termsigs_samples = jnp.asarray(self.termsigs_buf[indices])
+        pobs_samples = jnp.array(self.pobs_buf[indices])
+        nobs_samples = jnp.array(self.nobs_buf[indices])
+        acts_samples = jnp.array(self.acts_buf[indices])
+        rews_samples = jnp.array(self.rews_buf[indices])
+        termsigs_samples = jnp.array(self.termsigs_buf[indices])
         drews_samples = rews_samples * (1 - termsigs_samples) * discount_factor
         sampled_batch = Batch(
             pobs_samples,
@@ -113,25 +115,21 @@ class DQNAgent:
         # Jitted methods
         self.value_fn = jax.jit(self.state.apply_fn)
 
-    def make_decision(self, episode_count, obs, eval_flag=True):
+    def make_decision(self, obs, episode_count, eval_flag=True):
         self.key, subkey = jax.random.split(self.key)
         epsilon = self.epsilon_schedule(episode_count)
-        qvals = self.value_fn(
-            {'params': self.state.params},
-            obs
-        ).squeeze(axis=0)
-        act_g = Greedy(preferences=qvals).sample(seed=subkey)  # greedy action
-        act_s = EpsilonGreedy(
+        qvals = self.value_fn({'params': self.params_online}, obs).squeeze(axis=0)
+        act_greedy = Greedy(preferences=qvals).sample(seed=subkey)
+        act_sample = EpsilonGreedy(
             preferences=qvals,
-            epsilon=epsilon).sample(seed=subkey)  # sampled action
+            epsilon=epsilon).sample(seed=subkey)
         action = jax.lax.select(
             pred=eval_flag,
-            on_true=act_g,
-            on_false=act_s,
+            on_true=act_greedy,
+            on_false=act_sample,
         )
 
         return action
-
 
 
 if __name__ == '__main__':
@@ -155,7 +153,7 @@ if __name__ == '__main__':
     # Train agent
     o, i = env.reset()
     for _ in range(1000):
-        a = agent.make_decision(1, jnp.expand_dims(o, axis=0), eval_flag=False)
+        a = agent.make_decision(jnp.expand_dims(o, axis=0), 1, eval_flag=False)
         print(a)
         o, r, t, tr, i = env.step(int(a))
         if t:
