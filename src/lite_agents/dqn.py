@@ -15,43 +15,42 @@ class ReplayBuffer(object):
     """A simple off-policy replay buffer."""
 
     def __init__(self, capacity, obs_shape):
-        self.pobs_buf = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
-        self.acts_buf = np.zeros(shape=capacity, dtype=int)
-        self.rews_buf = np.zeros(shape=capacity, dtype=np.float32)
-        self.nobs_buf = np.zeros_like(self.pobs_buf)
-        self.term_buf = np.zeros(shape=capacity, dtype=np.float32)
-        self.sampled_batch = namedtuple('Replay_Sample', 'pobs, acts, rews, terms, nobs')
+        self.buf_pobs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
+        self.buf_acts = np.zeros(shape=capacity, dtype=int)
+        self.buf_rews = np.zeros(shape=capacity, dtype=np.float32)
+        self.buf_nobs = np.zeros_like(self.buf_pobs)
+        self.buf_terms = np.zeros(shape=capacity, dtype=np.float32)
+        self.Batch = namedtuple('Batch', 'pobs, acts, drews, nobs')
         # variables
         self.loc = 0  # replay instance index
         self.buffer_size = 0
         # property
         self.capacity = capacity
 
-    def store(self, prev_obs, action, reward, term_flag, next_obs):
-        self.pobs_buf[self.loc] = prev_obs
-        self.acts_buf[self.loc] = action
-        self.rews_buf[self.loc] = reward
-        self.term_buf[self.loc] = term_flag
-        self.nobs_buf[self.loc] = next_obs
+    def store(self, prev_obs, action, reward, next_obs, term_flag):
+        self.buf_pobs[self.loc] = prev_obs
+        self.buf_acts[self.loc] = action
+        self.buf_rews[self.loc] = reward
+        self.buf_nobs[self.loc] = next_obs
+        self.buf_terms[self.loc] = term_flag
         self.loc = (self.loc + 1) % self.capacity
         self.buffer_size = min(self.buffer_size + 1, self.capacity)
-        self.loc += 1
 
     def sample(self, batch_size, discount_factor=0.99):
-        indices = np.random.randint(low=0, high=self.buffer_size, size=(batch_size,))
-        pobs_samples = jnp.array(self.pobs_buf[indices])
-        nobs_samples = jnp.array(self.nobs_buf[indices])
-        acts_samples = jnp.array(self.acts_buf[indices])
-        rews_samples = jnp.array(self.rews_buf[indices])
-        termsigs_samples = jnp.array(self.termsigs_buf[indices])
-        drews_samples = rews_samples * (1 - termsigs_samples) * discount_factor
-        sampled_batch = Batch(
-            pobs_samples,
-            acts_samples,
+        ids = np.random.randint(low=0, high=self.buffer_size, size=(batch_size,))
+        samples_pobs = jnp.array(self.buf_pobs[ids])
+        samples_acts = jnp.array(self.buf_acts[ids])
+        samples_rews = jnp.array(self.buf_rews[ids])
+        samples_nobs = jnp.array(self.buf_nobs[ids])
+        samples_terms = jnp.array(self.buf_terms[ids])
+        samples_drews = samples_rews * (1 - samples_terms) * discount_factor
+        sampled_batch = self.Batch(
+            samples_pobs,
+            samples_acts,
             # rews_samples,
             # termsigs_samples,
-            drews_samples,  # discounted rewards
-            nobs_samples
+            samples_drews,  # discounted rewards
+            samples_nobs
         )
         return sampled_batch
 
