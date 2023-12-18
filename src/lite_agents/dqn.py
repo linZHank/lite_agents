@@ -114,9 +114,9 @@ class DQNAgent:
         self.qvalue_fn = jax.jit(self.state.apply_fn)
 
     def make_decision(self, obs, episode_count, eval_flag=True):
+        qvals = self.qvalue_fn({'params': self.params_online}, obs).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
         epsilon = self.epsilon_schedule(episode_count)
-        qvals = self.qvalue_fn({'params': self.params_online}, obs).squeeze(axis=0)
         act_greedy = Greedy(preferences=qvals).sample(seed=subkey)
         act_sample = EpsilonGreedy(
             preferences=qvals,
@@ -134,7 +134,7 @@ if __name__ == '__main__':
     import gymnasium as gym
     # SETUP
     env = gym.make('CartPole-v1', render_mode='human')
-    buffer = ReplayBuffer(capacity=100, obs_shape=env.observation_space.shape)
+    buffer = ReplayBuffer(10000, env.observation_space.shape)
     agent = DQNAgent(
         seed=0,
         obs_shape=env.observation_space.shape,
@@ -149,17 +149,22 @@ if __name__ == '__main__':
             compute_vjp_flops=True
         )
     )  # view QNet structure in a table
+    ep, g = 0, 0  # episode_count, episodic_return
 
     # LOOP
     o_0, i = env.reset()
-    for _ in range(100):
+    for st in range(1000):
         a = agent.make_decision(jnp.expand_dims(o_0, axis=0), 1, eval_flag=False)
         # print(a)
         o_1, r, t, tr, i = env.step(int(a))
         buffer.store(o_0, a, o_1, r, t)
+        g += r
+        print(f"\n---episode: {ep+1}, step: {st+1}, return: {g}---")
+        print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
         o_0 = o_1.copy()
-        if t:
-            break
+        if t or tr:
+            ep += 1
+            o_0, i = env.reset()
     env.close()
 
 
