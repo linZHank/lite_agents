@@ -132,6 +132,7 @@ class DQNAgent:
 
 if __name__ == '__main__':
     import gymnasium as gym
+    import matplotlib.pyplot as plt
     # SETUP
     env = gym.make('CartPole-v1', render_mode='human')
     buffer = ReplayBuffer(10000, env.observation_space.shape)
@@ -149,11 +150,12 @@ if __name__ == '__main__':
             compute_vjp_flops=True
         )
     )  # view QNet structure in a table
-    ep, g = 0, 0  # episode_count, episodic_return
+    ep, st, g = 0, 0, 0  # episode_count, episodic_return
+    deposit_return, average_return = [], []
 
     # LOOP
     o_0, i = env.reset()
-    for st in range(1000):
+    for _ in range(1000):
         a = agent.make_decision(jnp.expand_dims(o_0, axis=0), 1, eval_flag=False)
         # print(a)
         o_1, r, t, tr, i = env.step(int(a))
@@ -162,9 +164,18 @@ if __name__ == '__main__':
         print(f"\n---episode: {ep+1}, step: {st+1}, return: {g}---")
         print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
         o_0 = o_1.copy()
+        st += 1
         if t or tr:
+            deposit_return.append(g)
+            average_return.append(sum(deposit_return) / len(deposit_return))
             ep += 1
+            st = 0
+            g = 0
             o_0, i = env.reset()
+            if ep >= 2:
+                break
     env.close()
+    plt.plot(average_return)
+    plt.show()
 
 
