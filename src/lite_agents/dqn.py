@@ -113,6 +113,25 @@ class DQNAgent:
         # Jitted methods
         self.qvalue_fn = jax.jit(self.state.apply_fn)
 
+    def update_params(self, replay_batch):
+        if self.polyak_step_size > 0:
+            self.params_stable = optax.incremental_update(
+                new_tensors=self.params_online,
+                old_tensors=self.params_stable,
+                step_size=self.polyak_step_size,
+            )
+        # else:
+        #     self.params_stable = optax.periodic_update(
+        #         new_tensors=self.params_online,
+        #         old_tensors=self.params_stable,
+        #         step=self.update_step,
+        #         update_period=self.update_period
+        #     )
+        loss, grads = jax.value_and_grad(self.loss_fn)(
+            self.params_online, self.params_stable, replay_batch
+        )
+
+
     def make_decision(self, obs, episode_count, eval_flag=True):
         qvals = self.qvalue_fn({'params': self.params_online}, obs).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
