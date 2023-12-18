@@ -2,6 +2,7 @@ from collections import namedtuple
 import numpy as np
 import jax
 import jax.numpy as jnp
+from flax.core import copy
 import flax.linen as nn
 from flax.training import train_state
 import optax
@@ -16,10 +17,10 @@ class ReplayBuffer(object):
 
     def __init__(self, capacity, obs_shape):
         self.buf_pobs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
-        self.buf_acts = np.zeros(shape=capacity, dtype=int)
-        self.buf_rews = np.zeros(shape=capacity, dtype=np.float32)
+        self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
+        self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_nobs = np.zeros_like(self.buf_pobs)
-        self.buf_terms = np.zeros(shape=capacity, dtype=np.float32)
+        self.buf_terms = np.zeros(shape=(capacity, 1), dtype=np.float32)
         # variables
         self.loc = 0  # replay instance index
         self.buffer_size = 0
@@ -35,7 +36,7 @@ class ReplayBuffer(object):
         self.loc = (self.loc + 1) % self.capacity
         self.buffer_size = min(self.buffer_size + 1, self.capacity)
 
-    def sample(self, batch_size, discount_factor=0.99):
+    def sample(self, batch_size):
         ids = np.random.randint(low=0, high=self.buffer_size, size=(batch_size,))
         self.sample_ids = ids
         sampled_pobs = jnp.array(self.buf_pobs[ids])
@@ -90,7 +91,7 @@ class DQNAgent:
             self.key,
             jnp.expand_dims(jnp.ones(obs_shape), axis=0)
         )['params']
-        # self.params_target = self.params_online.copy()
+        self.params_stable = copy(self.params_online, {})
         self.epsilon_schedule = optax.linear_schedule(
             init_value=1.0,
             end_value=0.01,
@@ -112,6 +113,7 @@ class DQNAgent:
 
         # Jitted methods
         self.qvalue_fn = jax.jit(self.state.apply_fn)
+        self.qloss_fn = jax.jit(self.double_q_loss)
 
     def update_params(self, replay_batch):
         if self.polyak_step_size > 0:
@@ -127,9 +129,32 @@ class DQNAgent:
         #         step=self.update_step,
         #         update_period=self.update_period
         #     )
-        loss, grads = jax.value_and_grad(self.loss_fn)(
-            self.params_online, self.params_stable, replay_batch
+        loss, grads = jax.value_and_grad(self.loss_fn)(replay_batch)
+
+    def double_q_loss(self, replay_batch, discount=0.99):
+
+        @jax.vmap
+        def doubleq_error(rew, term, act, gamma, q_pred, q_next, q_duel):
+            q_target = jax.lax.stop_gradient(
+                rew + (1 - term) * gamma * q_next[q_duel.argmax(axis=-1)]
+            )
+            td_error = q_target - q_pred[act]
+            return td_error
+
+        qval_pred = self.qvalue_fn({'params': self.params_online}, replay_batch.pob)
+        qval_next = self.qvalue_fn({'params': self.params_stable}, replay_batch.nob)
+        qval_duel = self.qvalue_fn({'params': self.params_online}, replay_batch.nob)
+        error_q = doubleq_error(
+            replay_batch.rew,
+            replay_batch.term,
+            replay_batch.act,
+            discount * jnp.ones_like(replay_batch.rew),
+            qval_pred,
+            qval_next,
+            qval_duel,
         )
+        loss_value = optax.l2_loss(error_q)
+        return loss_value.mean()
 
 
     def make_decision(self, obs, episode_count, eval_flag=True):
