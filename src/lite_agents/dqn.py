@@ -84,9 +84,17 @@ class DQNAgent:
     """RL agent powered by Deep-Q Network
 
     """
-    def __init__(self, seed, obs_shape, num_actions, hidden_sizes,):
+    def __init__(
+        self,
+        seed: int,
+        obs_shape: tuple,
+        num_actions: int,
+        hidden_sizes: tuple,
+        lr: float = 3e-4,
+        polyak_step_size: float = 0.005,
+    ):
         self.key = jax.random.PRNGKey(seed)
-        self.polyak_step_size = 0.005
+        self.polyak_step_size = polyak_step_size
         self.qnet = MLP(num_actions, hidden_sizes)
         self.params_online = self.qnet.init(
             self.key,
@@ -104,8 +112,7 @@ class DQNAgent:
         #     end_value=1e-4,
         #     transition_steps=10000,
         # )
-        self.lr = 1e-4
-        self.tx = optax.adam(self.lr)
+        self.tx = optax.adam(lr)
         self.state = train_state.TrainState.create(
           apply_fn=self.qnet.apply,
           params=self.params_online,
@@ -190,7 +197,8 @@ if __name__ == '__main__':
         seed=0,
         obs_shape=env.observation_space.shape,
         num_actions=env.action_space.n,
-        hidden_sizes=(64, 64),
+        hidden_sizes=(128, 128),
+        lr=1e-4,
     )
     print(
         agent.qnet.tabulate(
@@ -205,7 +213,7 @@ if __name__ == '__main__':
 
     # LOOP
     o_0, i = env.reset()
-    for _ in range(10000):
+    for _ in range(100000):
         a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep, eval_flag=False)
         # print(a)
         o_1, r, t, tr, i = env.step(int(a))
