@@ -86,6 +86,7 @@ class DQNAgent:
     """
     def __init__(self, seed, obs_shape, num_actions, hidden_sizes,):
         self.key = jax.random.PRNGKey(seed)
+        self.polyak_step_size = 0.005
         self.qnet = MLP(num_actions, hidden_sizes)
         self.params_online = self.qnet.init(
             self.key,
@@ -112,8 +113,9 @@ class DQNAgent:
         )
 
         # Jitted methods
-        self.qvalue_fn = jax.jit(self.state.apply_fn)
-        self.qloss_fn = jax.jit(self.double_q_loss)
+        self.value_fn = jax.jit(self.state.apply_fn)
+        self.loss_fn = jax.jit(self.double_q_loss)
+        self.train_fn = jax.jit(self.update_params)
 
     def update_params(self, replay_batch):
         if self.polyak_step_size > 0:
@@ -129,9 +131,14 @@ class DQNAgent:
         #         step=self.update_step,
         #         update_period=self.update_period
         #     )
-        loss, grads = jax.value_and_grad(self.loss_fn)(replay_batch)
+        loss, grads = jax.value_and_grad(self.loss_fn)(
+            self.params_online,
+            replay_batch,
+        )
+        self.state = self.state.apply_gradients(grads=grads)
+        return loss
 
-    def double_q_loss(self, replay_batch, discount=0.99):
+    def double_q_loss(self, params_online, replay_batch, discount=0.99):
 
         @jax.vmap
         def doubleq_error(rew, term, act, gamma, q_pred, q_next, q_duel):
@@ -141,9 +148,9 @@ class DQNAgent:
             td_error = q_target - q_pred[act]
             return td_error
 
-        qval_pred = self.qvalue_fn({'params': self.params_online}, replay_batch.pob)
-        qval_next = self.qvalue_fn({'params': self.params_stable}, replay_batch.nob)
-        qval_duel = self.qvalue_fn({'params': self.params_online}, replay_batch.nob)
+        qval_pred = self.value_fn({'params': params_online}, replay_batch.pob)
+        qval_next = self.value_fn({'params': self.params_stable}, replay_batch.nob)
+        qval_duel = self.value_fn({'params': params_online}, replay_batch.nob)
         error_q = doubleq_error(
             replay_batch.rew,
             replay_batch.term,
@@ -158,7 +165,7 @@ class DQNAgent:
 
 
     def make_decision(self, obs, episode_count, eval_flag=True):
-        qvals = self.qvalue_fn({'params': self.params_online}, obs).squeeze(axis=0)
+        qvals = self.value_fn({'params': self.params_online}, obs).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
         epsilon = self.epsilon_schedule(episode_count)
         act_greedy = Greedy(preferences=qvals).sample(seed=subkey)
