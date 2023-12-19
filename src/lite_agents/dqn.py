@@ -163,7 +163,6 @@ class DQNAgent:
         loss_value = optax.l2_loss(error_q)
         return loss_value.mean()
 
-
     def make_decision(self, obs, episode_count, eval_flag=True):
         qvals = self.value_fn({'params': self.params_online}, obs).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
@@ -185,13 +184,13 @@ if __name__ == '__main__':
     import gymnasium as gym
     import matplotlib.pyplot as plt
     # SETUP
-    env = gym.make('CartPole-v1', render_mode='human')
+    env = gym.make('CartPole-v1')
     buffer = ReplayBuffer(10000, env.observation_space.shape)
     agent = DQNAgent(
         seed=0,
         obs_shape=env.observation_space.shape,
         num_actions=env.action_space.n,
-        hidden_sizes=(5, 3),
+        hidden_sizes=(64, 64),
     )
     print(
         agent.qnet.tabulate(
@@ -206,27 +205,41 @@ if __name__ == '__main__':
 
     # LOOP
     o_0, i = env.reset()
-    for _ in range(1000):
-        a = agent.make_decision(jnp.expand_dims(o_0, axis=0), 1, eval_flag=False)
+    for _ in range(10000):
+        a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep, eval_flag=False)
         # print(a)
         o_1, r, t, tr, i = env.step(int(a))
         buffer.store(o_0, a, o_1, r, t)
         g += r
-        print(f"\n---episode: {ep+1}, step: {st+1}, return: {g}---")
-        print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
+        # print(f"\n---episode: {ep+1}, step: {st+1}, return: {g}---")
+        # print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
         o_0 = o_1.copy()
+        if ep > 10:
+            replay = buffer.sample(1024)
+            loss = agent.train_fn(replay)
+
         st += 1
         if t or tr:
+            print(f"\n---episode: {ep+1}, steps: {st+1}, return: {g}---\n")
             deposit_return.append(g)
             average_return.append(sum(deposit_return) / len(deposit_return))
             ep += 1
             st = 0
             g = 0
             o_0, i = env.reset()
-            if ep >= 2:
-                break
     env.close()
     plt.plot(average_return)
     plt.show()
 
-
+    # validation
+    env = gym.make('CartPole-v1', render_mode='human')
+    o_0, _ = env.reset()
+    term, trunc = False, False
+    for _ in range(1000):
+        a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep)
+        o_1, r, t, tr, i = env.step(int(a))
+        print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
+        o_0 = o_1.copy()
+        if t or tr:
+            break
+    env.close()
