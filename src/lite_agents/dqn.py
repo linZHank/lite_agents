@@ -10,6 +10,7 @@ from distrax import Greedy, EpsilonGreedy
 
 
 Batch = namedtuple('Batch', ['pob', 'act', 'nob', 'rew', 'term'])
+Params = namedtuple('Params', ['online', 'stable'])
 
 
 class ReplayBuffer(object):
@@ -37,7 +38,11 @@ class ReplayBuffer(object):
         self.buffer_size = min(self.buffer_size + 1, self.capacity)
 
     def sample(self, batch_size):
-        ids = np.random.randint(low=0, high=self.buffer_size, size=(batch_size,))
+        ids = np.random.randint(
+            low=0,
+            high=self.buffer_size,
+            size=(min(self.buffer_size, batch_size),)
+        )
         self.sample_ids = ids
         sampled_pobs = jnp.array(self.buf_pobs[ids])
         sampled_acts = jnp.array(self.buf_acts[ids])
@@ -90,54 +95,63 @@ class DQNAgent:
         obs_shape: tuple,
         num_actions: int,
         hidden_sizes: tuple,
+        epsilon_decay_episodes: int = 100,
+        warmup_episodes: int = 10,
         lr: float = 3e-4,
         polyak_step_size: float = 0.005,
     ):
+        # Variables
         self.key = jax.random.PRNGKey(seed)
+        self.epsilon_decay_episodes = epsilon_decay_episodes
+        self.warmup_episodes = warmup_episodes
         self.polyak_step_size = polyak_step_size
-        self.qnet = MLP(num_actions, hidden_sizes)
-        self.params_online = self.qnet.init(
-            self.key,
-            jnp.expand_dims(jnp.ones(obs_shape), axis=0)
-        )['params']
-        self.params_stable = copy(self.params_online, {})
         self.epsilon_schedule = optax.linear_schedule(
             init_value=1.0,
             end_value=0.01,
-            transition_steps=100,
-            transition_begin=10
+            transition_steps=epsilon_decay_episodes,
+            transition_begin=warmup_episodes,
         )
         # self.lr_schedule = optax.linear_schedule(
         #     init_value=3e-4,
         #     end_value=1e-4,
         #     transition_steps=10000,
         # )
+        # Q-Net and optimizer
+        self.qnet = MLP(num_actions, hidden_sizes)
+        self.params_online = self.qnet.init(
+            self.key,
+            jnp.expand_dims(jnp.ones(obs_shape), axis=0)
+        )['params']
+        self.params_stable = copy(self.params_online, {})
         self.tx = optax.adam(lr)
         self.state = train_state.TrainState.create(
           apply_fn=self.qnet.apply,
           params=self.params_online,
           tx=self.tx,
         )
-
         # Jitted methods
         self.value_fn = jax.jit(self.state.apply_fn)
         self.loss_fn = jax.jit(self.double_q_loss)
         self.train_fn = jax.jit(self.update_params)
 
     def update_params(self, replay_batch):
-        if self.polyak_step_size > 0:
-            self.params_stable = optax.incremental_update(
-                new_tensors=self.params_online,
-                old_tensors=self.params_stable,
-                step_size=self.polyak_step_size,
-            )
-        # else:
-        #     self.params_stable = optax.periodic_update(
-        #         new_tensors=self.params_online,
-        #         old_tensors=self.params_stable,
-        #         step=self.update_step,
-        #         update_period=self.update_period
-        #     )
+        """Update online and stable parameters. Jitted as self.train_fn()
+        Args:
+            replay_batch: sampled from ReplayBuffer
+        Returns:
+            loss: loss value of QNet
+        """
+        self.params_stable = optax.incremental_update(
+            new_tensors=self.params_online,
+            old_tensors=self.params_stable,
+            step_size=self.polyak_step_size,
+        )
+        # self.params_stable = optax.periodic_update(
+        #     new_tensors=self.params_online,
+        #     old_tensors=self.params_stable,
+        #     step=self.update_step,
+        #     update_period=self.update_period
+        # )
         loss, grads = jax.value_and_grad(self.loss_fn)(
             self.params_online,
             replay_batch,
@@ -146,7 +160,8 @@ class DQNAgent:
         return loss
 
     def double_q_loss(self, params_online, replay_batch, discount=0.99):
-
+        """Compute QNet's prediction loss. Jitted as self.loss_fn()
+        """
         @jax.vmap
         def doubleq_error(rew, term, act, gamma, q_pred, q_next, q_duel):
             q_target = jax.lax.stop_gradient(
@@ -167,16 +182,16 @@ class DQNAgent:
             qval_next,
             qval_duel,
         )
-        loss_value = optax.l2_loss(error_q)
-        return loss_value.mean()
+        loss_value = optax.l2_loss(error_q).mean()
+        return loss_value
 
     def make_decision(self, obs, episode_count, eval_flag=True):
-        qvals = self.value_fn({'params': self.params_online}, obs).squeeze(axis=0)
+        qvalues = self.value_fn({'params': self.params_online}, obs).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
         epsilon = self.epsilon_schedule(episode_count)
-        act_greedy = Greedy(preferences=qvals).sample(seed=subkey)
+        act_greedy = Greedy(preferences=qvalues).sample(seed=subkey)
         act_sample = EpsilonGreedy(
-            preferences=qvals,
+            preferences=qvalues,
             epsilon=epsilon).sample(seed=subkey)
         action = jax.lax.select(
             pred=eval_flag,
@@ -184,7 +199,7 @@ class DQNAgent:
             on_false=act_sample,
         )
 
-        return action
+        return action, qvalues
 
 
 if __name__ == '__main__':
@@ -194,11 +209,11 @@ if __name__ == '__main__':
     env = gym.make('CartPole-v1')
     buffer = ReplayBuffer(10000, env.observation_space.shape)
     agent = DQNAgent(
-        seed=0,
+        seed=19,
         obs_shape=env.observation_space.shape,
         num_actions=env.action_space.n,
         hidden_sizes=(128, 128),
-        lr=1e-4,
+        lr=3e-5,
     )
     print(
         agent.qnet.tabulate(
@@ -208,13 +223,13 @@ if __name__ == '__main__':
             compute_vjp_flops=True
         )
     )  # view QNet structure in a table
-    ep, st, g = 0, 0, 0  # episode_count, episodic_return
+    ep, st, est, g = 0, 0, 0, 0  # episode counts, step counts, episodic_return
     deposit_return, average_return = [], []
 
     # LOOP
     o_0, i = env.reset()
-    for _ in range(100000):
-        a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep, eval_flag=False)
+    for st in range(100000):
+        a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep+1, eval_flag=False)
         # print(a)
         o_1, r, t, tr, i = env.step(int(a))
         buffer.store(o_0, a, o_1, r, t)
@@ -222,17 +237,17 @@ if __name__ == '__main__':
         # print(f"\n---episode: {ep+1}, step: {st+1}, return: {g}---")
         # print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
         o_0 = o_1.copy()
-        if ep > 10:
-            replay = buffer.sample(1024)
+        if ep >= agent.warmup_episodes:
+            replay = buffer.sample(256)
             loss = agent.train_fn(replay)
-
-        st += 1
+        est += 1
         if t or tr:
-            print(f"\n---episode: {ep+1}, steps: {st+1}, return: {g}---\n")
+            print(f"\n---episode: {ep+1}, steps: {est}, return: {g}")
+            print(f"total steps: {st+1}---\n")
             deposit_return.append(g)
             average_return.append(sum(deposit_return) / len(deposit_return))
             ep += 1
-            st = 0
+            est = 0
             g = 0
             o_0, i = env.reset()
     env.close()
