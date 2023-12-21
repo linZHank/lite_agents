@@ -3,7 +3,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from flax.training import train_state
+# from flax.training import train_state
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import optax
@@ -92,53 +92,47 @@ class MLP(nn.Module):
 
 # SETUP
 key = jax.random.PRNGKey(19)
+tabulate_key, init_params_key, make_decision_key = jax.random.split(key, num=3)
 env = gym.make('CartPole-v1')
 buffer = ReplayBuffer(int(1e4), env.observation_space.shape)
 qnet = MLP(num_outputs=env.action_space.n, hidden_sizes=(3,))
 print(
     qnet.tabulate(
-        key,
+        tabulate_key,
         env.observation_space.sample(),
         compute_flops=True,
         compute_vjp_flops=True
     )
 )  # view QNet structure in a table
-online_p = qnet.init(
-    key,
+online_parameters = qnet.init(
+    init_params_key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
-)['params']  # init online parameters
-params = Params(online_p, online_p)  # init online and stable parameters
-tx = optax.adam(1e-4)
-state = train_state.TrainState.create(
-    apply_fn=qnet.apply,
-    params=params.online,
-    tx=tx,
-)
-epsilon_schedule = optax.linear_schedule(
-    init_value=1.0,
-    end_value=0.01,
-    transition_steps=100,
-    transition_begin=10,
-)
+)  # ['params']
+params = Params(online_parameters, online_parameters)
+# tx = optax.adam(1e-4)
+# epsilon_schedule = optax.linear_schedule(
+#     init_value=1.0,
+#     end_value=0.01,
+#     transition_steps=100,
+#     transition_begin=10,
+# )
 
 
-def make_decision(key, state, obs, epsilon_schedule, episode_counts, eval_flag=True):
-    qvalues = state.apply_fn({'params': state.params}, obs).squeeze(axis=0)
-    key, subkey = jax.random.split(key)
-    epsilon = epsilon_schedule(episode_counts)
-    distr_greedy = Greedy(preferences=qvalues).sample(seed=subkey)
+def make_decision(key, obs, params, epsilon, eval_flag=True):
+    qvals = qnet.apply(params.online, obs).squeeze(axis=0)
+    distr_greedy = Greedy(preferences=qvals).sample(seed=key)
     distr_sample = EpsilonGreedy(
-        preferences=qvalues,
-        epsilon=epsilon).sample(seed=subkey)
+        preferences=qvals,
+        epsilon=epsilon).sample(seed=key)
     action = jax.lax.select(
         pred=eval_flag,
         on_true=distr_greedy,
         on_false=distr_sample,
     )
 
-    return key, epsilon, qvalues, action
-
-
+    return action, qvals
+#
+#
 # @jax.vmap
 # def double_q_error(batch, q_pred, q_next, q_duel, gamma):
 #     q_target = jax.lax.stop_gradient(
@@ -149,49 +143,50 @@ def make_decision(key, state, obs, epsilon_schedule, episode_counts, eval_flag=T
 #
 #
 # @jax.jit
-# def train_step(state, params, batch):
-#     params_stable = optax.incremental_update(
+# def double_q_loss(params_online, params_stable, model, batch, discount=0.99):
+#     qval_pred = model.apply_fn({'params': params_online}, batch.pobs)
+#     qval_next = state.apply_fn({'params': params_stable}, batch.nobs)
+#     qval_duel = state.apply_fn({'params': params_online}, batch.nobs)
+#     qerr = double_q_error(
+#         batch,
+#         discount * jnp.ones_like(batch.rew),
+#         qval_pred,
+#         qval_next,
+#         qval_duel,
+#     )
+#     loss_value = optax.l2_loss(qerr).mean()
+#     return loss_value
+#
+# def polyak_update(params):
+#     stable_parameters = optax.incremental_update(
 #         new_tensors=params.online,
 #         old_tensors=params.stable,
 #         step_size=0.01
 #     )
 #
-#     def double_q_loss(params_online, params_stable, discount=0.99):
-#         qval_pred = state.apply_fn({'params': params_online}, batch.pob)
-#         qval_next = jax.lax.stop_gradient(state.apply_fn({'params': params_stable}, batch.nob))
-#         qval_duel = state.apply_fn({'params': params_online}, batch.nob)
-#         qerr = double_q_error(
-#             batch,
-#             discount * jnp.ones_like(batch.rew),
-#             qval_pred,
-#             qval_next,
-#             qval_duel,
-#         )
-#         loss_value = optax.l2_loss(qerr).mean()
-#         return loss_value
+# def train_step(state, params, batch):
 #     grad_fn = jax.value_and_grad(double_q_loss)
 #     qloss, grads = grad_fn(state.params, params_stable)
 #     state = state.apply_gradients(grads=grads)
-#     params = Params(params_online, params_stable)
+#     params = Params(online_p, stable_p)
 #     return state, qloss, params
-#
-#
-# # LOOP
+
+
+# LOOP
 ep, ep_return = 0, 0  # episode_count, episodic_return
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
-for st in range(300):
+for st in range(50):
     key, subkey = jax.random.split(key)
-    key, epsilon, qvals, act = make_decision(
+    act, qvals = make_decision(
         subkey,
-        state,
         jnp.expand_dims(pobs, axis=0),
-        epsilon_schedule,
-        ep+1,
+        params,
+        1.0,
         eval_flag=False,
     )
+    print(act, qvals)
     # act = env.action_space.sample()
-    # print(act, qvals)
     nobs, rew, term, trunc, _ = env.step(int(act))
     buffer.store(pobs, act, nobs, rew, term)
     ep_return += rew
@@ -201,12 +196,12 @@ for st in range(300):
     # print(f"reward: {rew}")
     # print(f"termination flag: {term}")
     # print(f"truncated flag: {trunc}")
-    pobs = nobs.copy()
-    if ep >= 1:
-        rep = buffer.sample(subkey, 1024)
-        # loss, state = train_step(state, params.stable, replay)
+    pobs = nobs
+    # if ep >= 1:
+    #     rep = buffer.sample(subkey, 1024)
+    #     # loss, state = train_step(state, params.stable, replay)
     if term or trunc:
-        print(f"\n---episode: {ep+1}, epsilon: {epsilon}, steps: {st+1}, return: {ep_return}---\n")
+        print(f"\n---episode: {ep+1}, steps: {st+1}, return: {ep_return}---\n")
         deposit_return.append(ep_return)
         average_return.append(sum(deposit_return) / len(deposit_return))
         ep += 1
