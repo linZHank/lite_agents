@@ -109,6 +109,12 @@ online_parameters = qnet.init(
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )  # ['params']
 params = Params(online_parameters, online_parameters)
+epsilon_schedule = optax.linear_schedule(
+    init_value=1.0,
+    end_value=0.01,
+    transition_steps=100,
+    transition_begin=10,
+)
 # tx = optax.adam(1e-4)
 # epsilon_schedule = optax.linear_schedule(
 #     init_value=1.0,
@@ -120,14 +126,14 @@ params = Params(online_parameters, online_parameters)
 
 def make_decision(key, obs, params, epsilon, eval_flag=True):
     qvals = qnet.apply(params.online, obs).squeeze(axis=0)
-    distr_greedy = Greedy(preferences=qvals).sample(seed=key)
-    distr_sample = EpsilonGreedy(
+    act_greedy = Greedy(preferences=qvals).sample(seed=key)
+    act_sample = EpsilonGreedy(
         preferences=qvals,
         epsilon=epsilon).sample(seed=key)
     action = jax.lax.select(
         pred=eval_flag,
-        on_true=distr_greedy,
-        on_false=distr_sample,
+        on_true=act_greedy,
+        on_false=act_sample,
     )
 
     return action, qvals
@@ -176,13 +182,14 @@ def make_decision(key, obs, params, epsilon, eval_flag=True):
 ep, ep_return = 0, 0  # episode_count, episodic_return
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
-for st in range(50):
+epsilon = epsilon_schedule(ep + 1)
+for st in range(3000):
     key, subkey = jax.random.split(key)
     act, qvals = make_decision(
         subkey,
         jnp.expand_dims(pobs, axis=0),
         params,
-        1.0,
+        epsilon,
         eval_flag=False,
     )
     print(act, qvals)
@@ -201,12 +208,13 @@ for st in range(50):
     #     rep = buffer.sample(subkey, 1024)
     #     # loss, state = train_step(state, params.stable, replay)
     if term or trunc:
-        print(f"\n---episode: {ep+1}, steps: {st+1}, return: {ep_return}---\n")
         deposit_return.append(ep_return)
         average_return.append(sum(deposit_return) / len(deposit_return))
+        print(f"\n---episode: {ep+1}, steps: {st+1}, epsilon:{epsilon}, return: {ep_return}---\n")
         ep += 1
         ep_return = 0
         pobs, _ = env.reset()
+        epsilon = epsilon_schedule(ep + 1)
 env.close()
 plt.plot(average_return)
 plt.show()
