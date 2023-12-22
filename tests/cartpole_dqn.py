@@ -18,15 +18,16 @@ class ReplayBuffer(object):
     """A simple off-policy replay buffer."""
 
     def __init__(self, capacity, obs_shape):
+        # Variables
+        self.loc = 0  # replay instance index
+        self.occupied_size = 0
+        # Replay storages
         self.buf_pobs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
         self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_nobs = np.zeros_like(self.buf_pobs)
         self.buf_terms = np.zeros(shape=(capacity, 1), dtype=np.float32)
-        # variables
-        self.loc = 0  # replay instance index
-        self.buffer_size = 0
-        # property
+        # Properties
         self.capacity = capacity
 
     def store(self, prev_obs, action, next_obs, reward, term_flag):
@@ -36,24 +37,36 @@ class ReplayBuffer(object):
         self.buf_rews[self.loc] = reward
         self.buf_terms[self.loc] = term_flag
         self.loc = (self.loc + 1) % self.capacity
-        self.buffer_size = min(self.buffer_size + 1, self.capacity)
+        self.occupied_size = min(self.occupied_size + 1, self.capacity)
 
     def sample(self, key, batch_size):
         """Sample a batch of experience
         TODO: try jit
         """
-        ids = jax.random.randint(
-            key=key,
-            shape=(min(self.buffer_size, batch_size),),
-            minval=0,
-            maxval=self.buffer_size,
+        # ids = jax.random.randint(
+        #     key=key,
+        #     shape=((batch_size,)),
+        #     minval=0,
+        #     maxval=self.buffer_size,
+        # )
+        # if batch_size > self.occupied_size:
+        #     print(f"WARNING: batch size {batch_size} > stored size: {self.occupied_size}")
+        ids = np.random.randint(
+            low=0,
+            high=self.occupied_size,
+            size=((batch_size,))
         )
         self.sample_ids = ids
-        sampled_pobs = jnp.array(self.buf_pobs[ids])
-        sampled_acts = jnp.array(self.buf_acts[ids])
-        sampled_nobs = jnp.array(self.buf_nobs[ids])
-        sampled_rews = jnp.array(self.buf_rews[ids])
-        sampled_terms = jnp.array(self.buf_terms[ids])
+        # sampled_pobs = jnp.array(self.buf_pobs[ids])
+        # sampled_acts = jnp.array(self.buf_acts[ids])
+        # sampled_nobs = jnp.array(self.buf_nobs[ids])
+        # sampled_rews = jnp.array(self.buf_rews[ids])
+        # sampled_terms = jnp.array(self.buf_terms[ids])
+        sampled_pobs = self.buf_pobs[ids]
+        sampled_acts = self.buf_acts[ids]
+        sampled_nobs = self.buf_nobs[ids]
+        sampled_rews = self.buf_rews[ids]
+        sampled_terms = self.buf_terms[ids]
         # sampled_drews = sampled_rews * (1 - sampled_terms) * discount_factor  # BIG MISTAKE HERE
         sampled_batch = Batch(
             sampled_pobs,
@@ -63,9 +76,6 @@ class ReplayBuffer(object):
             sampled_terms,  # terminal flags
         )
         return sampled_batch
-
-    def is_ready(self, batch_size):  # warm up trick
-        return batch_size <= self.capacity
 
 
 class MLP(nn.Module):
@@ -183,7 +193,7 @@ ep, ep_return = 0, 0  # episode_count, episodic_return
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
 epsilon = epsilon_schedule(ep + 1)
-for st in range(3000):
+for st in range(1000):
     key, subkey = jax.random.split(key)
     act, qvals = make_decision(
         subkey,
@@ -204,8 +214,8 @@ for st in range(3000):
     # print(f"termination flag: {term}")
     # print(f"truncated flag: {trunc}")
     pobs = nobs
-    # if ep >= 1:
-    #     rep = buffer.sample(subkey, 1024)
+    if ep >= 10:
+        rep = buffer.sample(subkey, 1024)
     #     # loss, state = train_step(state, params.stable, replay)
     if term or trunc:
         deposit_return.append(ep_return)

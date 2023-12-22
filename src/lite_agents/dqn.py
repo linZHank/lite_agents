@@ -41,7 +41,7 @@ class ReplayBuffer(object):
         ids = np.random.randint(
             low=0,
             high=self.buffer_size,
-            size=(min(self.buffer_size, batch_size),)
+            size=((batch_size,))
         )
         self.sample_ids = ids
         sampled_pobs = jnp.array(self.buf_pobs[ids])
