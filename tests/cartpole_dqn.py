@@ -154,14 +154,14 @@ def double_q_error(rew, term, gamma, q_pred, q_next, q_duel):
 
 
 @jax.jit
-def double_q_loss(params_online, params_stable, model, batch, discount=0.99):
+def double_q_loss(model, params_online, params_stable, batch, discount=0.99):
     qval_pred = model.apply(params_online, batch.pobs)
     qval_next = model.apply(params_stable, batch.nobs)
     qval_duel = model.apply(params_online, batch.nobs)
     qerr = double_q_error(
-        jnp.ones_like(batch.rew),
+        batch.rew,
         batch.term,
-        discount,
+        discount * jnp.ones_like(batch.rew),
         qval_pred,
         qval_next,
         qval_duel,
@@ -212,6 +212,8 @@ for st in range(1000):
     pobs = nobs
     if ep >= 10:
         rep = buffer.sample(subkey, 1024)
+        qloss_val = double_q_loss(qnet, params.online, params.stable, rep)
+        print(qloss_val)
     #     # loss, state = train_step(state, params.stable, replay)
     if term or trunc:
         deposit_return.append(ep_return)
