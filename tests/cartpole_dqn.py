@@ -125,13 +125,8 @@ epsilon_schedule = optax.linear_schedule(
     transition_steps=100,
     transition_begin=10,
 )
-# tx = optax.adam(1e-4)
-# epsilon_schedule = optax.linear_schedule(
-#     init_value=1.0,
-#     end_value=0.01,
-#     transition_steps=100,
-#     transition_begin=10,
-# )
+optimizer = optax.adam(1e-4)
+opt_state = optimizer.init(params.online)
 
 
 def make_decision(key, obs, params, epsilon, eval_flag=True):
@@ -147,32 +142,33 @@ def make_decision(key, obs, params, epsilon, eval_flag=True):
     )
 
     return action, qvals
-#
-#
-# @jax.vmap
-# def double_q_error(batch, q_pred, q_next, q_duel, gamma):
-#     q_target = jax.lax.stop_gradient(
-#         batch.rew + (1 - batch.term) * gamma * q_next[q_duel.argmax(axis=-1)]
-#     )
-#     td_error = q_target - q_pred[act]
-#     return td_error
-#
-#
-# @jax.jit
-# def double_q_loss(params_online, params_stable, model, batch, discount=0.99):
-#     qval_pred = model.apply_fn({'params': params_online}, batch.pobs)
-#     qval_next = state.apply_fn({'params': params_stable}, batch.nobs)
-#     qval_duel = state.apply_fn({'params': params_online}, batch.nobs)
-#     qerr = double_q_error(
-#         batch,
-#         discount * jnp.ones_like(batch.rew),
-#         qval_pred,
-#         qval_next,
-#         qval_duel,
-#     )
-#     loss_value = optax.l2_loss(qerr).mean()
-#     return loss_value
-#
+
+
+@jax.vmap
+def double_q_error(rew, term, gamma, q_pred, q_next, q_duel):
+    q_target = jax.lax.stop_gradient(
+        rew + (1 - term) * gamma * q_next[q_duel.argmax(axis=-1)]
+    )
+    td_error = q_target - q_pred[act]
+    return td_error
+
+
+@jax.jit
+def double_q_loss(params_online, params_stable, model, batch, discount=0.99):
+    qval_pred = model.apply(params_online, batch.pobs)
+    qval_next = model.apply(params_stable, batch.nobs)
+    qval_duel = model.apply(params_online, batch.nobs)
+    qerr = double_q_error(
+        jnp.ones_like(batch.rew),
+        batch.term,
+        discount,
+        qval_pred,
+        qval_next,
+        qval_duel,
+    )
+    loss_value = optax.l2_loss(qerr).mean()
+    return loss_value
+
 # def polyak_update(params):
 #     stable_parameters = optax.incremental_update(
 #         new_tensors=params.online,
