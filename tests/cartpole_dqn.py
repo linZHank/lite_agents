@@ -185,7 +185,7 @@ deposit_return, average_return = [], []
 pobs, _ = env.reset()
 epsilon = epsilon_schedule(ep + 1)
 key, subkey = jax.random.split(key)
-for st in range(40000):
+for st in range(500):
     key, subkey = jax.random.split(key)
     act, qvals = make_decision(
         subkey,
@@ -208,9 +208,10 @@ for st in range(40000):
     pobs = nobs
     if ep >= 10:
         rep = buffer.sample(256)
-        # qloss_val = loss_fn(params.online, params.stable, rep)
-        params, loss_val, opt_state = train_step(params.online, params.stable, rep, opt_state)
-        params = polyak_update(params)
+        qloss_val = loss_fn(params.online, params.stable, rep)
+        print(f"loss: {qloss_val}")
+        # params, loss_val, opt_state = train_step(params.online, params.stable, rep, opt_state)
+        # params = polyak_update(params)
     #     # loss, state = train_step(state, params.stable, replay)
     if term or trunc:
         deposit_return.append(ep_return)

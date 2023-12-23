@@ -9,7 +9,7 @@ import optax
 from distrax import Greedy, EpsilonGreedy
 
 
-Batch = namedtuple('Batch', ['pob', 'act', 'nob', 'rew', 'gamma'])
+Batch = namedtuple('Batch', ['pobs', 'act', 'nobs', 'rew', 'gamma'])
 Params = namedtuple('Params', ['online', 'stable'])
 
 
@@ -107,7 +107,7 @@ class DQNAgent:
         self.polyak_step_size = polyak_step_size
         # Variables
         self.key = jax.random.PRNGKey(seed)
-        self.episodes_count = 0
+        self.ep_count = 0
         # Hyperparams scheduler
         self.epsilon_schedule = optax.linear_schedule(
             init_value=1.0,
@@ -131,10 +131,10 @@ class DQNAgent:
         self.optimizer = optax.adam(lr)
         self.opt_state = self.optimizer.init({'params': self.params_online})
         # Jitted methods
-    #     self.value_fn = jax.jit(self.state.apply_fn)
-    #     self.loss_fn = jax.jit(self.double_q_loss)
-    #     self.train_fn = jax.jit(self.update_params)
-    #
+        # self.value_fn = jax.jit(self.state.apply_fn)
+        self.loss_fn = jax.jit(self.loss_fn)
+        # self.train_fn = jax.jit(self.update_params)
+
     # def update_params(self, replay_batch):
     #     """Update online and stable parameters. Jitted as self.train_fn()
     #     Args:
@@ -160,34 +160,31 @@ class DQNAgent:
     #     self.state = self.state.apply_gradients(grads=grads)
     #     return loss
     #
-    # def double_q_loss(self, params_online, replay_batch, discount=0.99):
-    #     """Compute QNet's prediction loss. Jitted as self.loss_fn()
-    #     """
-    #     @jax.vmap
-    #     def doubleq_error(rew, term, act, gamma, q_pred, q_next, q_duel):
-    #         q_target = jax.lax.stop_gradient(
-    #             rew + (1 - term) * gamma * q_next[q_duel.argmax(axis=-1)]
-    #         )
-    #         td_error = q_target - q_pred[act]
-    #         return td_error
-    #
-    #     qval_pred = self.value_fn({'params': params_online}, replay_batch.pob)
-    #     qval_next = self.value_fn({'params': self.params_stable}, replay_batch.nob)
-    #     qval_duel = self.value_fn({'params': params_online}, replay_batch.nob)
-    #     error_q = doubleq_error(
-    #         replay_batch.rew,
-    #         replay_batch.term,
-    #         replay_batch.act,
-    #         discount * jnp.ones_like(replay_batch.rew),
-    #         qval_pred,
-    #         qval_next,
-    #         qval_duel,
-    #     )
-    #     loss_value = optax.l2_loss(error_q).mean()
-    #     return loss_value
+
+    def loss_fn(self, params_online, batch):
+        @jax.vmap
+        def double_q_error(act, rew, gamma, q_pred, q_next, q_duel):
+            q_target = jax.lax.stop_gradient(
+                rew + gamma * q_next[q_duel.argmax(axis=-1)]
+            )
+            td_error = q_target - q_pred[act]
+            return td_error
+        qval_pred = self.qnet.apply({'params': params_online}, batch.pobs)
+        qval_next = self.qnet.apply({'params': self.params_stable}, batch.nobs)
+        qval_duel = self.qnet.apply({'params': params_online}, batch.nobs)
+        qerr = double_q_error(
+            batch.act,
+            batch.rew,
+            batch.gamma,
+            qval_pred,
+            qval_next,
+            qval_duel,
+        )
+        loss_value = optax.l2_loss(qerr).mean()
+        return loss_value
 
     def make_decision(self, obs, eval_flag=True):
-        qvalues = self.qnet.apply(
+        qvalues = jax.jit(self.qnet.apply)(
             {'params': self.params_online},
             obs,
         ).squeeze(axis=0)
@@ -195,7 +192,7 @@ class DQNAgent:
         if eval_flag:
             self.epsilon = 0.
         else:
-            self.epsilon = self.epsilon_schedule(self.episodes_count)
+            self.epsilon = self.epsilon_schedule(self.ep_count)
         act_greedy = Greedy(preferences=qvalues).sample(seed=subkey)
         act_sample = EpsilonGreedy(
             preferences=qvalues,
@@ -228,27 +225,37 @@ if __name__ == '__main__':
             compute_vjp_flops=True
         )
     )  # view QNet structure in a table
-    ep, ep_return = 0, 0
+    ep_return = 0
     deposit_return, average_return = [], []
     pobs, _ = env.reset()
-    for st in range(10000):
+    for st in range(500):
         act, qvals = agent.make_decision(
             jnp.expand_dims(pobs, axis=0),
             eval_flag=False,
         )
-        print(act, qvals)
         nobs, rew, term, trunc, _ = env.step(int(act))
-    #     buffer.store(o_0, a, o_1, r, t)
-    #     g += r
-    #     # print(f"\n---episode: {ep+1}, step: {st+1}, return: {g}---")
-    #     # print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
-    #     if ep >= agent.warmup_episodes:
-    #         replay = buffer.sample(256)
-    #         loss = agent.train_fn(replay)
+        buffer.store(pobs, act, nobs, rew, term)
+        ep_return += rew
+        # print(f"previous observation: {pobs}")
+        # print(f"action: {act}")
+        # print(f"q-value: {qvals}")
+        # print(f"next observation: {nobs}")
+        # print(f"reward: {rew}")
+        # print(f"termination flag: {term}")
+        # print(f"truncated flag: {trunc}")
+        if agent.ep_count >= agent.warmup_episodes:
+            replay = buffer.sample(256)
+            loss_val = agent.loss_fn(agent.params_online, replay)
+            print(f"loss: {loss_val}")
     #     est += 1
         pobs = nobs
         if term or trunc:
-            break
+            agent.ep_count += 1
+            deposit_return.append(ep_return)
+            average_return.append(sum(deposit_return) / len(deposit_return))
+            print(f"\n---episode: {agent.ep_count}, steps: {st+1}, epsilon:{agent.epsilon}, return: {ep_return}---\n")
+            ep_return = 0
+            pobs, _ = env.reset()
     #         print(f"\n---episode: {ep+1}, steps: {est}, return: {g}")
     #         print(f"total steps: {st+1}---\n")
     #         deposit_return.append(g)
@@ -257,9 +264,9 @@ if __name__ == '__main__':
     #         est = 0
     #         g = 0
     #         o_0, i = env.reset()
-    # env.close()
-    # plt.plot(average_return)
-    # plt.show()
+    env.close()
+    plt.plot(average_return)
+    plt.show()
     #
     # # validation
     # env = gym.make('CartPole-v1', render_mode='human')
