@@ -141,7 +141,7 @@ def double_q_error(act, rew, term, gamma, q_pred, q_next, q_duel):
 
 
 @jax.jit
-def loss_fn(params_online, params_stable, batch, discount=0.95):
+def loss_fn(params_online, params_stable, batch, discount=0.9):
     qval_pred = qnet.apply(params_online, batch.pobs)
     qval_next = qnet.apply(params_stable, batch.nobs)
     qval_duel = qnet.apply(params_online, batch.nobs)
