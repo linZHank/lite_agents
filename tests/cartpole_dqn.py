@@ -39,7 +39,7 @@ class ReplayBuffer(object):
         self.loc = (self.loc + 1) % self.capacity
         self.occupied_size = min(self.occupied_size + 1, self.capacity)
 
-    def sample(self, key, batch_size):
+    def sample(self, batch_size):
         """Sample a batch of experience
         """
         # if batch_size > self.occupied_size:
@@ -207,7 +207,7 @@ for st in range(40000):
     # print(f"truncated flag: {trunc}")
     pobs = nobs
     if ep >= 10:
-        rep = buffer.sample(subkey, 256)
+        rep = buffer.sample(256)
         # qloss_val = loss_fn(params.online, params.stable, rep)
         params, loss_val, opt_state = train_step(params.online, params.stable, rep, opt_state)
         params = polyak_update(params)
