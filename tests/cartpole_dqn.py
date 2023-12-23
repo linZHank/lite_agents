@@ -41,14 +41,7 @@ class ReplayBuffer(object):
 
     def sample(self, key, batch_size):
         """Sample a batch of experience
-        TODO: try jit
         """
-        # ids = jax.random.randint(
-        #     key=key,
-        #     shape=((batch_size,)),
-        #     minval=0,
-        #     maxval=self.buffer_size,
-        # )
         # if batch_size > self.occupied_size:
         #     print(f"WARNING: batch size {batch_size} > stored size: {self.occupied_size}")
         ids = np.random.randint(
@@ -57,23 +50,17 @@ class ReplayBuffer(object):
             size=((batch_size,))
         )
         self.sample_ids = ids
-        # sampled_pobs = jnp.array(self.buf_pobs[ids])
-        # sampled_acts = jnp.array(self.buf_acts[ids])
-        # sampled_nobs = jnp.array(self.buf_nobs[ids])
-        # sampled_rews = jnp.array(self.buf_rews[ids])
-        # sampled_terms = jnp.array(self.buf_terms[ids])
         sampled_pobs = self.buf_pobs[ids]
         sampled_acts = self.buf_acts[ids]
         sampled_nobs = self.buf_nobs[ids]
         sampled_rews = self.buf_rews[ids]
         sampled_terms = self.buf_terms[ids]
-        # sampled_drews = sampled_rews * (1 - sampled_terms) * discount_factor  # BIG MISTAKE HERE
         sampled_batch = Batch(
             sampled_pobs,
             sampled_acts,
             sampled_nobs,
-            sampled_rews,  # discounted rewards
-            sampled_terms,  # terminal flags
+            sampled_rews,
+            sampled_terms,
         )
         return sampled_batch
 
@@ -102,20 +89,20 @@ class MLP(nn.Module):
 
 # SETUP
 key = jax.random.PRNGKey(19)
-tabulate_key, init_params_key, make_decision_key = jax.random.split(key, num=3)
+# tabulate_key, init_params_key, make_decision_key = jax.random.split(key, num=3)
 env = gym.make('CartPole-v1')
 buffer = ReplayBuffer(int(1e4), env.observation_space.shape)
-qnet = MLP(num_outputs=env.action_space.n, hidden_sizes=(3,))
+qnet = MLP(num_outputs=env.action_space.n, hidden_sizes=(128, 128))
 print(
     qnet.tabulate(
-        tabulate_key,
+        key,
         env.observation_space.sample(),
         compute_flops=True,
         compute_vjp_flops=True
     )
 )  # view QNet structure in a table
 online_parameters = qnet.init(
-    init_params_key,
+    key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )  # ['params']
 params = Params(online_parameters, online_parameters)
@@ -145,7 +132,7 @@ def make_decision(key, obs, params, epsilon, eval_flag=True):
 
 
 @jax.vmap
-def double_q_error(rew, term, gamma, q_pred, q_next, q_duel):
+def double_q_error(act, rew, term, gamma, q_pred, q_next, q_duel):
     q_target = jax.lax.stop_gradient(
         rew + (1 - term) * gamma * q_next[q_duel.argmax(axis=-1)]
     )
@@ -154,11 +141,12 @@ def double_q_error(rew, term, gamma, q_pred, q_next, q_duel):
 
 
 @jax.jit
-def double_q_loss(model, params_online, params_stable, batch, discount=0.99):
-    qval_pred = model.apply(params_online, batch.pobs)
-    qval_next = model.apply(params_stable, batch.nobs)
-    qval_duel = model.apply(params_online, batch.nobs)
+def loss_fn(params_online, params_stable, batch, discount=0.95):
+    qval_pred = qnet.apply(params_online, batch.pobs)
+    qval_next = qnet.apply(params_stable, batch.nobs)
+    qval_duel = qnet.apply(params_online, batch.nobs)
     qerr = double_q_error(
+        batch.act,
         batch.rew,
         batch.term,
         discount * jnp.ones_like(batch.rew),
@@ -169,27 +157,35 @@ def double_q_loss(model, params_online, params_stable, batch, discount=0.99):
     loss_value = optax.l2_loss(qerr).mean()
     return loss_value
 
-# def polyak_update(params):
-#     stable_parameters = optax.incremental_update(
-#         new_tensors=params.online,
-#         old_tensors=params.stable,
-#         step_size=0.01
-#     )
-#
-# def train_step(state, params, batch):
-#     grad_fn = jax.value_and_grad(double_q_loss)
-#     qloss, grads = grad_fn(state.params, params_stable)
-#     state = state.apply_gradients(grads=grads)
-#     params = Params(online_p, stable_p)
-#     return state, qloss, params
+
+@jax.jit
+def train_step(params_online, params_stable, batch, opt_state):
+    loss_grad_fn = jax.value_and_grad(loss_fn)
+    loss_val, grads = loss_grad_fn(params_online, params_stable, batch)
+    updates, opt_state = optimizer.update(grads, opt_state)
+    params_online = optax.apply_updates(params_online, updates)
+    params = Params(params_online, params_stable)
+    return params, loss_val, opt_state
+
+
+@jax.jit
+def polyak_update(params):
+    params_stable = optax.incremental_update(
+        new_tensors=params.online,
+        old_tensors=params.stable,
+        step_size=0.01
+    )
+    params = Params(params.online, params_stable)
+    return params
 
 
 # LOOP
-ep, ep_return = 0, 0  # episode_count, episodic_return
+ep, ep_return = 0, 0
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
 epsilon = epsilon_schedule(ep + 1)
-for st in range(1000):
+key, subkey = jax.random.split(key)
+for st in range(40000):
     key, subkey = jax.random.split(key)
     act, qvals = make_decision(
         subkey,
@@ -198,7 +194,7 @@ for st in range(1000):
         epsilon,
         eval_flag=False,
     )
-    print(act, qvals)
+    # print(act, qvals)
     # act = env.action_space.sample()
     nobs, rew, term, trunc, _ = env.step(int(act))
     buffer.store(pobs, act, nobs, rew, term)
@@ -211,9 +207,10 @@ for st in range(1000):
     # print(f"truncated flag: {trunc}")
     pobs = nobs
     if ep >= 10:
-        rep = buffer.sample(subkey, 1024)
-        qloss_val = double_q_loss(qnet, params.online, params.stable, rep)
-        print(qloss_val)
+        rep = buffer.sample(subkey, 256)
+        # qloss_val = loss_fn(params.online, params.stable, rep)
+        params, loss_val, opt_state = train_step(params.online, params.stable, rep, opt_state)
+        params = polyak_update(params)
     #     # loss, state = train_step(state, params.stable, replay)
     if term or trunc:
         deposit_return.append(ep_return)
@@ -228,15 +225,22 @@ plt.plot(average_return)
 plt.show()
 
 # validation
-# env = gym.make('LunarLander-v2', render_mode='human')
-# o_0, _ = env.reset()
-# term, trunc = False, False
-# for _ in range(1000):
-#     a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep)
-#     o_1, r, t, tr, i = env.step(int(a))
-#     print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
-#     o_0 = o_1.copy()
-#     if t or tr:
-#         break
-# env.close()
-#
+env = gym.make('CartPole-v1', render_mode='human')
+pobs, _ = env.reset()
+term, trunc = False, False
+for _ in range(500):
+    key, subkey = jax.random.split(key)
+    act, qvals = make_decision(
+        subkey,
+        jnp.expand_dims(pobs, axis=0),
+        params,
+        epsilon,
+    )
+    nobs, rew, term, trunc, _ = env.step(int(act))
+    ep_return += rew
+    pobs = nobs
+    if term or trunc:
+        print(f"\n---return: {ep_return}---\n")
+        break
+env.close()
+
