@@ -3,7 +3,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-# from flax.training import train_state
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import optax
@@ -185,7 +184,7 @@ deposit_return, average_return = [], []
 pobs, _ = env.reset()
 epsilon = epsilon_schedule(ep + 1)
 key, subkey = jax.random.split(key)
-for st in range(500):
+for st in range(5000):
     key, subkey = jax.random.split(key)
     act, qvals = make_decision(
         subkey,
@@ -208,11 +207,11 @@ for st in range(500):
     pobs = nobs
     if ep >= 10:
         rep = buffer.sample(256)
-        qloss_val = loss_fn(params.online, params.stable, rep)
-        print(f"loss: {qloss_val}")
-        # params, loss_val, opt_state = train_step(params.online, params.stable, rep, opt_state)
-        # params = polyak_update(params)
-    #     # loss, state = train_step(state, params.stable, replay)
+        # qloss_val = loss_fn(params.online, params.stable, rep)
+        # print(f"loss: {qloss_val}")
+        params, loss_val, opt_state = train_step(params.online, params.stable, rep, opt_state)
+        params = polyak_update(params)
+        print(f"loss: {loss_val}")
     if term or trunc:
         deposit_return.append(ep_return)
         average_return.append(sum(deposit_return) / len(deposit_return))

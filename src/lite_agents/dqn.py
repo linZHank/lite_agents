@@ -126,42 +126,16 @@ class DQNAgent:
         self.params_online = self.qnet.init(
             self.key,
             jnp.expand_dims(jnp.ones(obs_shape), axis=0)
-        )['params']
+        )
         self.params_stable = copy(self.params_online, {})
         self.optimizer = optax.adam(lr)
-        self.opt_state = self.optimizer.init({'params': self.params_online})
+        self.opt_state = self.optimizer.init(self.params_online)
         # Jitted methods
-        # self.value_fn = jax.jit(self.state.apply_fn)
         self.loss_fn = jax.jit(self.loss_fn)
-        # self.train_fn = jax.jit(self.update_params)
+        self.polyak_update_fn = jax.jit(self.polyak_update_fn)
+        # self.online_update_fn = jax.jit(self.online_update_fn)
 
-    # def update_params(self, replay_batch):
-    #     """Update online and stable parameters. Jitted as self.train_fn()
-    #     Args:
-    #         replay_batch: sampled from ReplayBuffer
-    #     Returns:
-    #         loss: loss value of QNet
-    #     """
-    #     self.params_stable = optax.incremental_update(
-    #         new_tensors=self.params_online,
-    #         old_tensors=self.params_stable,
-    #         step_size=self.polyak_step_size,
-    #     )
-    #     # self.params_stable = optax.periodic_update(
-    #     #     new_tensors=self.params_online,
-    #     #     old_tensors=self.params_stable,
-    #     #     step=self.update_step,
-    #     #     update_period=self.update_period
-    #     # )
-    #     loss, grads = jax.value_and_grad(self.loss_fn)(
-    #         self.params_online,
-    #         replay_batch,
-    #     )
-    #     self.state = self.state.apply_gradients(grads=grads)
-    #     return loss
-    #
-
-    def loss_fn(self, params_online, batch):
+    def loss_fn(self, params_online, replay_batch):
         @jax.vmap
         def double_q_error(act, rew, gamma, q_pred, q_next, q_duel):
             q_target = jax.lax.stop_gradient(
@@ -169,13 +143,13 @@ class DQNAgent:
             )
             td_error = q_target - q_pred[act]
             return td_error
-        qval_pred = self.qnet.apply({'params': params_online}, batch.pobs)
-        qval_next = self.qnet.apply({'params': self.params_stable}, batch.nobs)
-        qval_duel = self.qnet.apply({'params': params_online}, batch.nobs)
+        qval_pred = self.qnet.apply(params_online, replay_batch.pobs)
+        qval_next = self.qnet.apply(self.params_stable, replay_batch.nobs)
+        qval_duel = self.qnet.apply(params_online, replay_batch.nobs)
         qerr = double_q_error(
-            batch.act,
-            batch.rew,
-            batch.gamma,
+            replay_batch.act,
+            replay_batch.rew,
+            replay_batch.gamma,
             qval_pred,
             qval_next,
             qval_duel,
@@ -183,9 +157,28 @@ class DQNAgent:
         loss_value = optax.l2_loss(qerr).mean()
         return loss_value
 
+    def online_update_fn(self, params_online, replay_batch):
+        loss_grad_fn = jax.value_and_grad(self.loss_fn)
+        loss_val, grads = loss_grad_fn(params_online, replay_batch)
+        updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        self.params_online = optax.apply_updates(params_online, updates)
+        return loss_val
+
+    def polyak_update_fn(self):
+        self.params_stable = optax.incremental_update(
+            new_tensors=self.params_online,
+            old_tensors=self.params_stable,
+            step_size=0.01
+        )
+
+    def train_step(self, replay_batch):
+        loss_value = self.online_update_fn(self.params_online, replay_batch)
+        self.polyak_update_fn()
+        return loss_value
+
     def make_decision(self, obs, eval_flag=True):
-        qvalues = jax.jit(self.qnet.apply)(
-            {'params': self.params_online},
+        qvalues = self.qnet.apply(
+            self.params_online,
             obs,
         ).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
@@ -228,7 +221,7 @@ if __name__ == '__main__':
     ep_return = 0
     deposit_return, average_return = [], []
     pobs, _ = env.reset()
-    for st in range(500):
+    for st in range(5000):
         act, qvals = agent.make_decision(
             jnp.expand_dims(pobs, axis=0),
             eval_flag=False,
@@ -245,8 +238,9 @@ if __name__ == '__main__':
         # print(f"truncated flag: {trunc}")
         if agent.ep_count >= agent.warmup_episodes:
             replay = buffer.sample(256)
-            loss_val = agent.loss_fn(agent.params_online, replay)
-            print(f"loss: {loss_val}")
+            # loss_val = agent.loss_fn(agent.params_online, replay)
+            # print(f"loss: {loss_val}")
+            loss_val = agent.train_step(replay)
     #     est += 1
         pobs = nobs
         if term or trunc:
