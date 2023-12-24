@@ -101,6 +101,8 @@ class DQNAgent:
         polyak_step_size: float = 0.005,
     ):
         # Properties
+        self.obs_shape = obs_shape
+        self.num_actions = num_actions
         self.epsilon_decay_episodes = epsilon_decay_episodes
         self.lr = lr
         self.warmup_episodes = warmup_episodes
@@ -115,7 +117,7 @@ class DQNAgent:
             transition_steps=epsilon_decay_episodes,
             transition_begin=warmup_episodes,
         )
-        self.epsilon = 1.0  # init_value 
+        self.epsilon = 1.0  # init_value
         # self.lr_schedule = optax.linear_schedule(
         #     init_value=3e-4,
         #     end_value=1e-4,
@@ -123,33 +125,43 @@ class DQNAgent:
         # )
         # Q-Net and optimizer
         self.qnet = MLP(num_actions, hidden_sizes)
-        self.params_online = self.qnet.init(
-            self.key,
-            jnp.expand_dims(jnp.ones(obs_shape), axis=0)
-        )
-        self.params_stable = copy(self.params_online, {})
-        self.optimizer = optax.adam(lr)
-        self.opt_state = self.optimizer.init(self.params_online)
+        # self.params_online = self.qnet.init(
+        #     self.key,
+        #     jnp.expand_dims(jnp.ones(obs_shape), axis=0)
+        # )
+        # self.params_stable = copy(self.params_online, {})
+        # self.optimizer = optax.adam(lr)
+        # self.opt_state = self.optimizer.init(params)
         # Jitted methods
         self.loss_fn = jax.jit(self.loss_fn)
         self.polyak_update_fn = jax.jit(self.polyak_update_fn)
-        # self.online_update_fn = jax.jit(self.online_update_fn)
+        self.online_update_fn = jax.jit(self.online_update_fn)
 
-    def loss_fn(self, params_online, replay_batch):
+    def init_params(self):
+        parameters = self.qnet.init(
+            self.key,
+            jnp.expand_dims(jnp.ones(self.obs_shape), axis=0)
+        )
+        params = Params(parameters, parameters)
+        return params
+
+    def init_optimizer(self, params):
+        self.optimizer = optax.adam(self.lr)
+        self.opt_state = self.optimizer.init(params.online)
+
+    def loss_fn(self, params_online, params_stable, replay_batch):
         @jax.vmap
-        def double_q_error(act, rew, gamma, q_pred, q_next, q_duel):
+        def double_q_error(batch, q_pred, q_next, q_duel):
             q_target = jax.lax.stop_gradient(
-                rew + gamma * q_next[q_duel.argmax(axis=-1)]
+                batch.rew + batch.gamma * q_next[q_duel.argmax(axis=-1)]
             )
-            td_error = q_target - q_pred[act]
+            td_error = q_target - q_pred[batch.act]
             return td_error
         qval_pred = self.qnet.apply(params_online, replay_batch.pobs)
-        qval_next = self.qnet.apply(self.params_stable, replay_batch.nobs)
+        qval_next = self.qnet.apply(params_stable, replay_batch.nobs)
         qval_duel = self.qnet.apply(params_online, replay_batch.nobs)
         qerr = double_q_error(
-            replay_batch.act,
-            replay_batch.rew,
-            replay_batch.gamma,
+            replay_batch,
             qval_pred,
             qval_next,
             qval_duel,
@@ -157,28 +169,29 @@ class DQNAgent:
         loss_value = optax.l2_loss(qerr).mean()
         return loss_value
 
-    def online_update_fn(self, params_online, replay_batch):
+    def online_update_fn(self, params, replay_batch):
         loss_grad_fn = jax.value_and_grad(self.loss_fn)
-        loss_val, grads = loss_grad_fn(params_online, replay_batch)
+        loss_val, grads = loss_grad_fn(params.online, params.stable, replay_batch)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
-        self.params_online = optax.apply_updates(params_online, updates)
-        return loss_val
+        params_online = optax.apply_updates(params.online, updates)
+        return loss_val, params_online
 
-    def polyak_update_fn(self):
-        self.params_stable = optax.incremental_update(
-            new_tensors=self.params_online,
-            old_tensors=self.params_stable,
+    def polyak_update_fn(self, params):
+        params_stable = optax.incremental_update(
+            new_tensors=params.online,
+            old_tensors=params.stable,
             step_size=0.01
         )
+        return params_stable
 
-    def train_step(self, replay_batch):
-        loss_value = self.online_update_fn(self.params_online, replay_batch)
-        self.polyak_update_fn()
-        return loss_value
+    def train_step(self, params, replay_batch):
+        loss_value, params_online = self.online_update_fn(params, replay_batch)
+        params_stable = self.polyak_update_fn(params)
+        return loss_value, Params(params_online, params_stable)
 
-    def make_decision(self, obs, eval_flag=True):
+    def make_decision(self, obs, params, eval_flag=True):
         qvalues = self.qnet.apply(
-            self.params_online,
+            params.online,
             obs,
         ).squeeze(axis=0)
         self.key, subkey = jax.random.split(self.key)
@@ -209,6 +222,7 @@ if __name__ == '__main__':
         seed=19,
         obs_shape=env.observation_space.shape,
         num_actions=env.action_space.n,
+        hidden_sizes=(128, 128),
     )
     print(
         agent.qnet.tabulate(
@@ -218,12 +232,16 @@ if __name__ == '__main__':
             compute_vjp_flops=True
         )
     )  # view QNet structure in a table
+    # Initialize agent
+    params = agent.init_params()
+    agent.init_optimizer(params)
     ep_return = 0
     deposit_return, average_return = [], []
     pobs, _ = env.reset()
-    for st in range(5000):
+    for st in range(20000):
         act, qvals = agent.make_decision(
             jnp.expand_dims(pobs, axis=0),
+            params,
             eval_flag=False,
         )
         nobs, rew, term, trunc, _ = env.step(int(act))
@@ -238,9 +256,11 @@ if __name__ == '__main__':
         # print(f"truncated flag: {trunc}")
         if agent.ep_count >= agent.warmup_episodes:
             replay = buffer.sample(256)
-            # loss_val = agent.loss_fn(agent.params_online, replay)
+            # loss_val = agent.loss_fn(params.online, params.stable, replay)
+            # loss_val, params_online = agent.online_update_fn(params, replay)
+            loss_val, params = agent.train_step(params, replay)
             # print(f"loss: {loss_val}")
-            loss_val = agent.train_step(replay)
+            # loss_val = agent.train_step(agent.params_online, replay)
     #     est += 1
         pobs = nobs
         if term or trunc:
@@ -250,27 +270,24 @@ if __name__ == '__main__':
             print(f"\n---episode: {agent.ep_count}, steps: {st+1}, epsilon:{agent.epsilon}, return: {ep_return}---\n")
             ep_return = 0
             pobs, _ = env.reset()
-    #         print(f"\n---episode: {ep+1}, steps: {est}, return: {g}")
-    #         print(f"total steps: {st+1}---\n")
-    #         deposit_return.append(g)
-    #         average_return.append(sum(deposit_return) / len(deposit_return))
-    #         ep += 1
-    #         est = 0
-    #         g = 0
-    #         o_0, i = env.reset()
     env.close()
     plt.plot(average_return)
     plt.show()
-    #
-    # # validation
-    # env = gym.make('CartPole-v1', render_mode='human')
-    # o_0, _ = env.reset()
-    # term, trunc = False, False
-    # for _ in range(1000):
-    #     a = agent.make_decision(jnp.expand_dims(o_0, axis=0), ep)
-    #     o_1, r, t, tr, i = env.step(int(a))
-    #     print(f"state: {o_0}\naction: {a}\nreward: {r}\nterminated? {t}\ntruncated? {tr}\ninfo: {i}\nnext state: {o_1}")
-    #     o_0 = o_1.copy()
-    #     if t or tr:
-    #         break
-    # env.close()
+
+    # validation
+    env = gym.make('CartPole-v1', render_mode='human')
+    pobs, _ = env.reset()
+    term, trunc = False, False
+    for _ in range(500):
+        act, qvals = agent.make_decision(
+            jnp.expand_dims(pobs, axis=0),
+            params,
+        )
+        nobs, rew, term, trunc, _ = env.step(int(act))
+        ep_return += rew
+        pobs = nobs
+        if term or trunc:
+            print(f"\n---return: {ep_return}---\n")
+            break
+    env.close()
+
