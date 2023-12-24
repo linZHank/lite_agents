@@ -98,7 +98,7 @@ class DQNAgent:
         epsilon_decay_episodes: int = 100,
         lr: float = 1e-4,
         warmup_episodes: int = 10,
-        polyak_step_size: float = 0.005,
+        polyak_step_size: float = 0.05,
     ):
         # Properties
         self.obs_shape = obs_shape
@@ -110,7 +110,7 @@ class DQNAgent:
         # Variables
         self.key = jax.random.PRNGKey(seed)
         self.ep_count = 0
-        # Hyperparams scheduler
+        # Hyperparams
         self.epsilon_schedule = optax.linear_schedule(
             init_value=1.0,
             end_value=0.01,
@@ -123,15 +123,8 @@ class DQNAgent:
         #     end_value=1e-4,
         #     transition_steps=10000,
         # )
-        # Q-Net and optimizer
+        # Q-Net
         self.qnet = MLP(num_actions, hidden_sizes)
-        # self.params_online = self.qnet.init(
-        #     self.key,
-        #     jnp.expand_dims(jnp.ones(obs_shape), axis=0)
-        # )
-        # self.params_stable = copy(self.params_online, {})
-        # self.optimizer = optax.adam(lr)
-        # self.opt_state = self.optimizer.init(params)
         # Jitted methods
         self.loss_fn = jax.jit(self.loss_fn)
         self.polyak_update_fn = jax.jit(self.polyak_update_fn)
@@ -260,8 +253,6 @@ if __name__ == '__main__':
             # loss_val, params_online = agent.online_update_fn(params, replay)
             loss_val, params = agent.train_step(params, replay)
             # print(f"loss: {loss_val}")
-            # loss_val = agent.train_step(agent.params_online, replay)
-    #     est += 1
         pobs = nobs
         if term or trunc:
             agent.ep_count += 1
