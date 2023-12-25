@@ -2,9 +2,7 @@ from collections import namedtuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-from flax.core import copy
 import flax.linen as nn
-from flax.training import train_state
 import optax
 from distrax import Greedy, EpsilonGreedy
 
