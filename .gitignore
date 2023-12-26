@@ -1,3 +1,6 @@
+# Configs
+*.json
+
 # Data directory
 data/
 
