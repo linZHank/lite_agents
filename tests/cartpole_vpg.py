@@ -36,15 +36,17 @@ class OnPolicyReplayBuffer(object):
         self.buf_acts[self.loc] = action
         self.buf_rews[self.loc] = reward
         self.buf_logpas[self.loc] = logp
-        self.loc = self.loc + 1
+        self.loc += 1
 
     def finish_episode(self, discount=0.9):
         """ End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
+        print(f"episode srart index: {self.ep_init_loc}")
         ep_slice = slice(self.ep_init_loc, self.loc)
-        self.buf_rets[ep_slice] = lfilter([1], [1, -discount], self.buf_rews[ep_slice][::-1])[::-1]  # rewards to go
+        self.buf_rets[ep_slice] = lfilter([1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0)[::-1]  # rewards to go
         self.ep_init_loc = self.loc
+        print(f"current index: {self.loc}")
 
     def extract(self):
         """Get replay experience
@@ -55,6 +57,7 @@ class OnPolicyReplayBuffer(object):
             self.buf_logpas,
             self.buf_rets,
         )
+        # self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
         return replay
 
 class MLP(nn.Module):
@@ -108,13 +111,14 @@ for st in range(500):
     ep_return += rew
     pobs = nobs
     if term or trunc:
-        # buf.finish_episode()
+        buf.finish_episode()
         deposit_return.append(ep_return)
         average_return.append(sum(deposit_return) / len(deposit_return))
         print(f"\n---episode: {ep+1}, steps: {st+1}, return: {ep_return}---\n")
         ep += 1
         ep_return = 0
         pobs, _ = env.reset()
+buf.finish_episode()
 rep = buf.extract()
 env.close()
 plt.plot(average_return)
