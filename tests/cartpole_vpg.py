@@ -4,6 +4,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
+import optax
 from distrax import Categorical
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
@@ -42,11 +43,11 @@ class OnPolicyReplayBuffer(object):
         """ End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
-        print(f"episode srart index: {self.ep_init_loc}")
+        # print(f"episode srart index: {self.ep_init_loc}")
         ep_slice = slice(self.ep_init_loc, self.loc)
         self.buf_rets[ep_slice] = lfilter([1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0)[::-1]  # rewards to go
         self.ep_init_loc = self.loc
-        print(f"current index: {self.loc}")
+        # print(f"current index: {self.loc}")
 
     def extract(self):
         """Get replay experience
@@ -57,7 +58,7 @@ class OnPolicyReplayBuffer(object):
             self.buf_logpas,
             self.buf_rets,
         )
-        # self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
+        self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
         return replay
 
 class MLP(nn.Module):
@@ -88,47 +89,65 @@ def loss_fn(params, data_obs, data_acts, data_rets):
     logpas = distributions.log_prob(data_acts)
     return -(logpas * data_rets).mean()
 
+@jax.jit
+def train_epoch(params, opt_state, data):
+    loss_grad_fn = jax.value_and_grad(loss_fn)
+    loss_val, grads = loss_grad_fn(params, data.obs, data.act, data.ret)
+    updates, opt_state = optimizer.update(grads, opt_state)
+    params = optax.apply_updates(params, updates)
+    return params, loss_val, opt_state
+
 # SETUP
 key = jax.random.PRNGKey(19)
 env = gym.make('CartPole-v1')
-buf = OnPolicyReplayBuffer(capacity=500, obs_shape=env.observation_space.shape, act_shape=env.action_space.shape, num_act=env.action_space.n)
+buf = OnPolicyReplayBuffer(
+    capacity=500,
+    obs_shape=env.observation_space.shape,
+    act_shape=env.action_space.shape,
+    num_act=env.action_space.n,
+)
 policy_net = MLP(env.action_space.n)
 params = policy_net.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
+optimizer = optax.adam(1e-4)
+opt_state = optimizer.init(params)
 
 
 # LOOP
+num_epochs = 10
 ep, ep_return = 0, 0
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
 key, subkey = jax.random.split(key)
-for st in range(500):
-    key, subkey = jax.random.split(key)
-    act, logp = make_decision(
-        subkey,
-        params,
-        jnp.expand_dims(pobs, axis=0),
-    )
-    # print(act, logp_a)
-    # act = env.action_space.sample()
-    nobs, rew, term, trunc, _ = env.step(int(act))
-    buf.store(pobs, act, rew, logp)
-    ep_return += rew
-    pobs = nobs
-    if term or trunc:
-        buf.finish_episode()
-        deposit_return.append(ep_return)
-        average_return.append(sum(deposit_return) / len(deposit_return))
-        print(f"\n---episode: {ep+1}, steps: {st+1}, return: {ep_return}---\n")
-        ep += 1
-        ep_return = 0
-        pobs, _ = env.reset()
-buf.finish_episode()
-rep = buf.extract()
-loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
-print(f"loss: {loss_val}")
+for e in range(num_epochs):
+    for st in range(buf.capacity):
+        key, subkey = jax.random.split(key)
+        act, logp = make_decision(
+            subkey,
+            params,
+            jnp.expand_dims(pobs, axis=0),
+        )
+        # print(act, logp_a)
+        # act = env.action_space.sample()
+        nobs, rew, term, trunc, _ = env.step(int(act))
+        buf.store(pobs, act, rew, logp)
+        ep_return += rew
+        pobs = nobs
+        if term or trunc:
+            buf.finish_episode()
+            deposit_return.append(ep_return)
+            average_return.append(sum(deposit_return) / len(deposit_return))
+            print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+            ep += 1
+            ep_return = 0
+            pobs, _ = env.reset()
+    buf.finish_episode()
+    rep = buf.extract()
+# loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+    params, loss_val, opt_state = train_epoch(params, opt_state, rep)
+    print(f"\n---epoch {e+1} loss: {loss_val}---\n")
 env.close()
 plt.plot(average_return)
 plt.show()
