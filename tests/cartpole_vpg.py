@@ -39,7 +39,7 @@ class OnPolicyReplayBuffer(object):
         self.buf_logpas[self.loc] = logp
         self.loc += 1
 
-    def finish_episode(self, discount=0.9):
+    def finish_episode(self, discount=0.95):
         """ End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
@@ -101,12 +101,12 @@ def train_epoch(params, opt_state, data):
 key = jax.random.PRNGKey(19)
 env = gym.make('CartPole-v1')
 buf = OnPolicyReplayBuffer(
-    capacity=500,
+    capacity=1000,
     obs_shape=env.observation_space.shape,
     act_shape=env.action_space.shape,
     num_act=env.action_space.n,
 )
-policy_net = MLP(env.action_space.n)
+policy_net = MLP(env.action_space.n, (64, 64))
 params = policy_net.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
@@ -116,7 +116,7 @@ opt_state = optimizer.init(params)
 
 
 # LOOP
-num_epochs = 10
+num_epochs = 20
 ep, ep_return = 0, 0
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
@@ -153,21 +153,21 @@ plt.plot(average_return)
 plt.show()
 
 # validation
-# env = gym.make('CartPole-v1', render_mode='human')
-# pobs, _ = env.reset()
-# term, trunc = False, False
-# for _ in range(500):
-#     key, subkey = jax.random.split(key)
-#     act, qvals = make_decision(
-#         subkey,
-#         params,
-#         jnp.expand_dims(pobs, axis=0),
-#     )
-#     nobs, rew, term, trunc, _ = env.step(int(act))
-#     ep_return += rew
-#     pobs = nobs
-#     if term or trunc:
-#         print(f"\n---return: {ep_return}---\n")
-#         break
-# env.close()
-#
+env = gym.make('CartPole-v1', render_mode='human')
+pobs, _ = env.reset()
+term, trunc = False, False
+for _ in range(500):
+    key, subkey = jax.random.split(key)
+    act, qvals = make_decision(
+        subkey,
+        params,
+        jnp.expand_dims(pobs, axis=0),
+    )
+    nobs, rew, term, trunc, _ = env.step(int(act))
+    ep_return += rew
+    pobs = nobs
+    if term or trunc:
+        print(f"\n---return: {ep_return}---\n")
+        break
+env.close()
+
