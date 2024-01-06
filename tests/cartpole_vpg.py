@@ -81,6 +81,13 @@ def make_decision(key, params, obs):
     logp_a = distribution.log_prob(act)
     return act, logp_a
 
+@jax.jit
+def loss_fn(params, data_obs, data_acts, data_rets):
+    logits = policy_net.apply(params, data_obs)
+    distributions = Categorical(logits=logits)
+    logpas = distributions.log_prob(data_acts)
+    return -(logpas * data_rets).mean()
+
 # SETUP
 key = jax.random.PRNGKey(19)
 env = gym.make('CartPole-v1')
@@ -120,6 +127,8 @@ for st in range(500):
         pobs, _ = env.reset()
 buf.finish_episode()
 rep = buf.extract()
+loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+print(f"loss: {loss_val}")
 env.close()
 plt.plot(average_return)
 plt.show()
