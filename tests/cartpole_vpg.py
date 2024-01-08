@@ -86,8 +86,8 @@ def make_decision(key, params, obs):
 def loss_fn(params, data_obs, data_acts, data_rets):
     logits = policy_net.apply(params, data_obs)
     distributions = Categorical(logits=logits)
-    logpas = distributions.log_prob(data_acts)
-    return -(logpas * data_rets).mean()
+    logpas = distributions.log_prob(data_acts.squeeze())  # squeeze actions data
+    return -(logpas * data_rets.squeeze()).mean()  # squeeze returns data
 
 @jax.jit
 def train_epoch(params, opt_state, data):
@@ -101,7 +101,7 @@ def train_epoch(params, opt_state, data):
 key = jax.random.PRNGKey(19)
 env = gym.make('CartPole-v1')
 buf = OnPolicyReplayBuffer(
-    capacity=1000,
+    capacity=500,
     obs_shape=env.observation_space.shape,
     act_shape=env.action_space.shape,
     num_act=env.action_space.n,
@@ -111,7 +111,7 @@ params = policy_net.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
-optimizer = optax.adam(1e-4)
+optimizer = optax.adam(1e-3)
 opt_state = optimizer.init(params)
 
 
@@ -145,7 +145,7 @@ for e in range(num_epochs):
             pobs, _ = env.reset()
     buf.finish_episode()
     rep = buf.extract()
-# loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+    # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
     print(f"\n---epoch {e+1} loss: {loss_val}---\n")
 env.close()
