@@ -10,15 +10,15 @@ import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
 
-Replay = namedtuple('Replay', ['obs', 'act', 'logp', 'ret'])
+Replay = namedtuple('Replay', ['obs', 'act', 'ret'])
 
 class OnPolicyReplayBuffer(object):
     """A simple on-policy replay buffer."""
 
     def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
         # Variables
-        self.loc = 0  # buffer instance index
-        self.ep_init_loc = 0  # episode initial index
+        self.id = 0  # buffer instance index
+        self.ep_init_id = 0  # episode initial index
         # Properties
         self.capacity = capacity
         self.obs_shape = obs_shape
@@ -28,26 +28,24 @@ class OnPolicyReplayBuffer(object):
         self.buf_obs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
         self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
-        self.buf_logpas = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_rets = np.zeros_like(self.buf_rews)
 
-    def store(self, obs, action, reward, logp):
-        assert self.loc < self.capacity
-        self.buf_obs[self.loc] = obs
-        self.buf_acts[self.loc] = action
-        self.buf_rews[self.loc] = reward
-        self.buf_logpas[self.loc] = logp
-        self.loc += 1
+    def store(self, observation, action, reward):
+        assert self.id < self.capacity
+        self.buf_obs[self.id] = observation
+        self.buf_acts[self.id] = action
+        self.buf_rews[self.id] = reward
+        self.id += 1
 
-    def finish_episode(self, discount=0.95):
+    def finish_episode(self, discount=0.9):
         """ End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
-        # print(f"episode srart index: {self.ep_init_loc}")
-        ep_slice = slice(self.ep_init_loc, self.loc)
+        # print(f"episode srart index: {self.ep_init_id}")
+        ep_slice = slice(self.ep_init_id, self.id)
         self.buf_rets[ep_slice] = lfilter([1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0)[::-1]  # rewards to go
-        self.ep_init_loc = self.loc
-        # print(f"current index: {self.loc}")
+        self.ep_init_id = self.id
+        # print(f"current index: {self.id}")
 
     def extract(self):
         """Get replay experience
@@ -55,9 +53,9 @@ class OnPolicyReplayBuffer(object):
         replay = Replay(
             self.buf_obs,
             self.buf_acts,
-            self.buf_logpas,
             self.buf_rets,
         )
+        # clean up replay buffer for next epoch
         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
         return replay
 
@@ -106,17 +104,17 @@ buf = OnPolicyReplayBuffer(
     act_shape=env.action_space.shape,
     num_act=env.action_space.n,
 )
-policy_net = MLP(env.action_space.n, (64, 64))
+policy_net = MLP(env.action_space.n, (128, 128))
 params = policy_net.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
-optimizer = optax.adam(1e-3)
+optimizer = optax.adam(3e-4)
 opt_state = optimizer.init(params)
 
 
 # LOOP
-num_epochs = 20
+num_epochs = 100
 ep, ep_return = 0, 0
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
@@ -132,7 +130,7 @@ for e in range(num_epochs):
         # print(act, logp_a)
         # act = env.action_space.sample()
         nobs, rew, term, trunc, _ = env.step(int(act))
-        buf.store(pobs, act, rew, logp)
+        buf.store(pobs, act, rew)
         ep_return += rew
         pobs = nobs
         if term or trunc:
@@ -152,7 +150,7 @@ env.close()
 plt.plot(average_return)
 plt.show()
 
-# validation
+# VALIDATION
 env = gym.make('CartPole-v1', render_mode='human')
 pobs, _ = env.reset()
 term, trunc = False, False
