@@ -4,13 +4,13 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import optax
-from distrax import Greedy, EpsilonGreedy
+from distrax import Categorical
 from scipy.signal import lfilter
 
 
 Replay = namedtuple('Replay', ['obs', 'act', 'ret'])
 
-class OnPolicyReplayBuffer(object):
+class ReplayBuffer(object):
     """A simple on-policy replay buffer."""
 
     def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
@@ -43,7 +43,7 @@ class OnPolicyReplayBuffer(object):
             return lfilter([1], [1, -discount], rews[::-1], axis=0,)[::-1]
 
         ep_slice = slice(self.ep_init_id, self.id)
-        self.buf_rets[ep_slice] = compute_rtgs(self.buf_rews)
+        self.buf_rets[ep_slice] = compute_rtgs(self.buf_rews[ep_slice])
         self.ep_init_id = self.id
 
     def extract(self):
@@ -61,7 +61,7 @@ class OnPolicyReplayBuffer(object):
 
 class MLP(nn.Module):
     num_outputs: int
-    hidden_sizes: tuple = (64, 64)
+    hidden_sizes: tuple
 
     @nn.compact
     def __call__(self, inputs):
@@ -72,4 +72,131 @@ class MLP(nn.Module):
             x = nn.relu(z)
         logits = nn.Dense(features=self.num_outputs, name='logits')(x)
         return logits
+
+
+class VPGAgent:
+    """RL agent powered by REINFORCE
+
+    """
+    def __init__(
+        self,
+        seed,
+        obs_shape,
+        act_shape,
+        num_act=None,
+        hidden_sizes=(64, 64),
+        learning_rate=3e-4,
+    ):
+        # Properties
+        self.key = jax.random.PRNGKey(seed)
+        self.obs_shape = obs_shape
+        self.act_shape = act_shape
+        self.num_act = num_act
+        self.lr = learning_rate
+        # Policy network
+        self.policy_net = MLP(num_act, hidden_sizes)
+
+    def init_params(self):
+        parameters = self.policy_net.init(
+            self.key,
+            jnp.expand_dims(jnp.ones(self.obs_shape), axis=0)
+        )
+        return parameters
+
+    def init_optimizer(self, params):
+        self.optimizer = optax.adam(self.lr)
+        self.opt_state = self.optimizer.init(params)
+
+    def make_decision(self, params, obs):
+        self.key, subkey = jax.random.split(self.key)
+        logits = self.policy_net.apply(params, obs).squeeze(axis=0)
+        distribution = Categorical(logits=logits)
+        act = distribution.sample(seed=subkey)
+        logp_a = distribution.log_prob(act)
+        return act, logp_a
+
+    def loss_fn(self, params, replay):
+        logits = self.policy_net.apply(params, replay.obs)
+        distributions = Categorical(logits=logits)
+        logpas = distributions.log_prob(replay.act.squeeze())  # squeeze actions data
+        return -(logpas * replay.ret.squeeze()).mean()  # squeeze returns data
+
+    def train_epoch(self, params, replay):
+        loss_grad_fn = jax.value_and_grad(self.loss_fn)
+        loss_val, grads = loss_grad_fn(params, replay)
+        updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
+        params = optax.apply_updates(params, updates)
+        return params, loss_val 
+
+
+
+if __name__=='__main__':
+    import gymnasium as gym
+    import matplotlib.pyplot as plt
+    # SETUP
+    key = jax.random.PRNGKey(19)
+    env = gym.make('CartPole-v1')
+    buffer = ReplayBuffer(
+        capacity=500,
+        obs_shape=env.observation_space.shape,
+        act_shape=env.action_space.shape,
+        num_act=env.action_space.n,
+    )
+    agent = VPGAgent(
+        seed=19,
+        obs_shape=env.observation_space.shape,
+        act_shape=env.action_space.shape,
+        num_act=env.action_space.n,
+    )
+    params = agent.init_params()
+    agent.init_optimizer(params)
+
+    num_epochs = 100
+    ep, ep_return = 0, 0
+    deposit_return, average_return = [], []
+    pobs, _ = env.reset()
+    for e in range(num_epochs):
+        for st in range(buffer.capacity):
+            act, logp = agent.make_decision(
+                params,
+                jnp.expand_dims(pobs, axis=0),
+            )
+            # print(act, logp)
+            nobs, rew, term, trunc, _ = env.step(int(act))
+            buffer.store(pobs, act, rew)
+            ep_return += rew
+            pobs = nobs
+            if term or trunc:
+                buffer.finish_episode()
+                deposit_return.append(ep_return)
+                average_return.append(sum(deposit_return) / len(deposit_return))
+                print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+                ep += 1
+                ep_return = 0
+                pobs, _ = env.reset()
+        buffer.finish_episode()
+        replay = buffer.extract()
+        # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+        params, loss_val = agent.train_epoch(params, replay)
+        print(f"\n---epoch {e+1} loss: {loss_val}---\n")
+    env.close()
+    plt.plot(average_return)
+    plt.show()
+
+    # VALIDATION
+    env = gym.make('CartPole-v1', render_mode='human')
+    pobs, _ = env.reset()
+    term, trunc = False, False
+    for _ in range(500):
+        act, qvals = agent.make_decision(
+            params,
+            jnp.expand_dims(pobs, axis=0),
+        )
+        nobs, rew, term, trunc, _ = env.step(int(act))
+        ep_return += rew
+        pobs = nobs
+        if term or trunc:
+            print(f"\n---return: {ep_return}---\n")
+            break
+    env.close()
 
