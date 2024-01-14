@@ -46,7 +46,7 @@ class ReplayBuffer(object):
         self.buf_rets[ep_slice] = compute_rtgs(self.buf_rews[ep_slice])
         self.ep_init_id = self.id
 
-    def extract(self):
+    def dump(self):
         """Get replay experience
         """
         replay = Replay(
@@ -175,7 +175,7 @@ if __name__=='__main__':
                 ep_return = 0
                 pobs, _ = env.reset()
         buffer.finish_episode()
-        replay = buffer.extract()
+        replay = buffer.dump()
         # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
         params, loss_val = agent.train_epoch(params, replay)
         print(f"\n---epoch {e+1} loss: {loss_val}---\n")
