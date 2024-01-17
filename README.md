@@ -17,10 +17,6 @@ pip install -e .
 ```python
 from lite_agents.dqn import ReplayBuffer, DQNAgent
 import gymnasium as gym
-
-# SETUP
-from lite_agents.dqn import ReplayBuffer, DQNAgent
-import gymnasium as gym
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
@@ -48,7 +44,7 @@ deposit_return, average_return = [], []
 pobs, _ = env.reset()
 
 # TRAIN
-for st in range(20000):
+for st in range(10000):
     act, qvals = agent.make_decision(
         jnp.expand_dims(pobs, axis=0),
         params,
