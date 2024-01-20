@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import optax
-from distrax import Categorical
+from distrax import Normal
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
@@ -26,7 +26,7 @@ class ReplayBuffer(object):
         self.num_act = num_act
         # Replay storages
         self.buf_obs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
-        self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
+        self.buf_acts = np.zeros(shape=(capacity, act_shape[0]), dtype=int)
         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_rets = np.zeros_like(self.buf_rews)
 
@@ -75,13 +75,15 @@ class GaussianPolicyNet(nn.Module):
         logits_lstd = nn.Dense(features=self.dim_acts, name='log_std')(x)
         return logits_mean, logits_lstd
 
-# def make_decision(key, params, obs):
-#     logits = policy_net.apply(params, obs).squeeze(axis=0)
-#     distribution = Categorical(logits=logits)
-#     act = distribution.sample(seed=key)
-#     logp_a = distribution.log_prob(act)
-#     return act, logp_a
-#
+def make_decision(key, params, obs):
+    mu, log_sigma = actor.apply(params, obs)
+    mu = mu.squeeze(axis=0)
+    sigma = jnp.exp(log_sigma.squeeze(axis=0))
+    distribution = Normal(loc=mu, scale=sigma+1e-10)
+    act = distribution.sample(seed=key)
+    logp_a = distribution.log_prob(act)
+    return act, logp_a
+
 # @jax.jit
 # def loss_fn(params, data_obs, data_acts, data_rets):
 #     logits = policy_net.apply(params, data_obs)
@@ -100,12 +102,11 @@ class GaussianPolicyNet(nn.Module):
 # SETUP
 key = jax.random.PRNGKey(19)
 env = gym.make('MountainCarContinuous-v0')
-# buf = OnPolicyReplayBuffer(
-#     capacity=500,
-#     obs_shape=env.observation_space.shape,
-#     act_shape=env.action_space.shape,
-#     num_act=env.action_space.n,
-# )
+buf = ReplayBuffer(
+    capacity=500,
+    obs_shape=env.observation_space.shape,
+    act_shape=env.action_space.shape,
+)
 actor = GaussianPolicyNet(dim_acts=env.action_space.shape[0])
 params = actor.init(
     key,
@@ -116,42 +117,42 @@ params = actor.init(
 #
 #
 # # LOOP
-# num_epochs = 100
-# ep, ep_return = 0, 0
+num_epochs = 2
+ep, ep_return = 0, 0
 # deposit_return, average_return = [], []
-# pobs, _ = env.reset()
-# key, subkey = jax.random.split(key)
-# for e in range(num_epochs):
-#     for st in range(buf.capacity):
-#         key, subkey = jax.random.split(key)
-#         act, logp = make_decision(
-#             subkey,
-#             params,
-#             jnp.expand_dims(pobs, axis=0),
-#         )
-#         # print(act, logp_a)
+pobs, _ = env.reset()
+key, subkey = jax.random.split(key)
+for e in range(num_epochs):
+    for st in range(buf.capacity):
+        key, subkey = jax.random.split(key)
+        act, logp = make_decision(
+            subkey,
+            params,
+            jnp.expand_dims(pobs, axis=0),
+        )
+        print(act, logp)
 #         # act = env.action_space.sample()
-#         nobs, rew, term, trunc, _ = env.step(int(act))
+        nobs, rew, term, trunc, _ = env.step(np.array(act))
 #         buf.store(pobs, act, rew)
-#         ep_return += rew
-#         pobs = nobs
-#         if term or trunc:
+        ep_return += rew
+        pobs = nobs
+        if term or trunc:
 #             buf.finish_episode()
-#             deposit_return.append(ep_return)
-#             average_return.append(sum(deposit_return) / len(deposit_return))
-#             print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
-#             ep += 1
-#             ep_return = 0
-#             pobs, _ = env.reset()
+            # deposit_return.append(ep_return)
+            # average_return.append(sum(deposit_return) / len(deposit_return))
+            print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+            ep += 1
+            ep_return = 0
+            pobs, _ = env.reset()
 #     buf.finish_episode()
 #     rep = buf.extract()
 #     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
 #     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
 #     print(f"\n---epoch {e+1} loss: {loss_val}---\n")
-# env.close()
+env.close()
 # plt.plot(average_return)
-# plt.show()
-#
+plt.show()
+
 # # VALIDATION
 # env = gym.make('CartPole-v1', render_mode='human')
 # pobs, _ = env.reset()
