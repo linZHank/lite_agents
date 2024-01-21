@@ -84,26 +84,27 @@ def make_decision(key, params, obs):
     logp_a = distribution.log_prob(act)
     return act, logp_a
 
-# @jax.jit
-# def loss_fn(params, data_obs, data_acts, data_rets):
-#     logits = policy_net.apply(params, data_obs)
-#     distributions = Categorical(logits=logits)
-#     logpas = distributions.log_prob(data_acts.squeeze())  # squeeze actions data
-#     return -(logpas * data_rets.squeeze()).mean()  # squeeze returns data
-#
-# @jax.jit
-# def train_epoch(params, opt_state, data):
-#     loss_grad_fn = jax.value_and_grad(loss_fn)
-#     loss_val, grads = loss_grad_fn(params, data.obs, data.act, data.ret)
-#     updates, opt_state = optimizer.update(grads, opt_state)
-#     params = optax.apply_updates(params, updates)
-#     return params, loss_val, opt_state
+@jax.jit
+def loss_fn(params, data_obs, data_acts, data_rets):
+    mus, log_sigmas = actor.apply(params, data_obs)
+    sigmas = jnp.exp(log_sigmas)
+    distributions = Normal(loc=mus, scale=sigmas+1e-10)
+    logpas = distributions.log_prob(data_acts)  # squeeze actions data
+    return -(logpas * data_rets).mean()  # squeeze returns data
+
+@jax.jit
+def train_epoch(params, opt_state, data):
+    loss_grad_fn = jax.value_and_grad(loss_fn)
+    loss_val, grads = loss_grad_fn(params, data.obs, data.act, data.ret)
+    updates, opt_state = optimizer.update(grads, opt_state)
+    params = optax.apply_updates(params, updates)
+    return params, loss_val, opt_state
 
 # SETUP
 key = jax.random.PRNGKey(19)
 env = gym.make('MountainCarContinuous-v0')
 buf = ReplayBuffer(
-    capacity=500,
+    capacity=5000,
     obs_shape=env.observation_space.shape,
     act_shape=env.action_space.shape,
 )
@@ -112,14 +113,14 @@ params = actor.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
-# optimizer = optax.adam(3e-4)
-# opt_state = optimizer.init(params)
-#
-#
-# # LOOP
-num_epochs = 2
+optimizer = optax.adam(3e-4)
+opt_state = optimizer.init(params)
+
+
+# LOOP
+num_epochs = 20
 ep, ep_return = 0, 0
-# deposit_return, average_return = [], []
+deposit_return, average_return = [], []
 pobs, _ = env.reset()
 key, subkey = jax.random.split(key)
 for e in range(num_epochs):
@@ -130,45 +131,44 @@ for e in range(num_epochs):
             params,
             jnp.expand_dims(pobs, axis=0),
         )
-        print(act, logp)
-#         # act = env.action_space.sample()
+        # print(act, logp)
         nobs, rew, term, trunc, _ = env.step(np.array(act))
-#         buf.store(pobs, act, rew)
+        buf.store(pobs, act, rew)
         ep_return += rew
         pobs = nobs
         if term or trunc:
-#             buf.finish_episode()
-            # deposit_return.append(ep_return)
-            # average_return.append(sum(deposit_return) / len(deposit_return))
+            buf.finish_episode()
+            deposit_return.append(ep_return)
+            average_return.append(sum(deposit_return) / len(deposit_return))
             print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
             ep += 1
             ep_return = 0
             pobs, _ = env.reset()
-#     buf.finish_episode()
-#     rep = buf.extract()
-#     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
-#     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
-#     print(f"\n---epoch {e+1} loss: {loss_val}---\n")
+    buf.finish_episode()
+    rep = buf.extract()
+    # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+    params, loss_val, opt_state = train_epoch(params, opt_state, rep)
+    print(f"\n---epoch {e+1} loss: {loss_val}---\n")
 env.close()
-# plt.plot(average_return)
+plt.plot(average_return)
 plt.show()
 
-# # VALIDATION
-# env = gym.make('CartPole-v1', render_mode='human')
-# pobs, _ = env.reset()
-# term, trunc = False, False
-# for _ in range(500):
-#     key, subkey = jax.random.split(key)
-#     act, qvals = make_decision(
-#         subkey,
-#         params,
-#         jnp.expand_dims(pobs, axis=0),
-#     )
-#     nobs, rew, term, trunc, _ = env.step(int(act))
-#     ep_return += rew
-#     pobs = nobs
-#     if term or trunc:
-#         print(f"\n---return: {ep_return}---\n")
-#         break
-# env.close()
-#
+# VALIDATION
+env = gym.make('MountainCarContinuous-v0', render_mode='human')
+pobs, _ = env.reset()
+term, trunc = False, False
+for _ in range(1000):
+    key, subkey = jax.random.split(key)
+    act, qvals = make_decision(
+        subkey,
+        params,
+        jnp.expand_dims(pobs, axis=0),
+    )
+    nobs, rew, term, trunc, _ = env.step(int(act))
+    ep_return += rew
+    pobs = nobs
+    if term or trunc:
+        print(f"\n---return: {ep_return}---\n")
+        break
+env.close()
+
