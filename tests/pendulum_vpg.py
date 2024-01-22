@@ -37,7 +37,7 @@ class ReplayBuffer(object):
         self.buf_rews[self.id] = reward
         self.id += 1
 
-    def finish_episode(self, discount=0.9):
+    def finish_episode(self, discount=0.98):
         """ End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
@@ -88,7 +88,7 @@ def make_decision(key, params, obs):
 def loss_fn(params, data_obs, data_acts, data_rets):
     mus, log_sigmas = actor.apply(params, data_obs)
     sigmas = jnp.exp(log_sigmas)
-    distributions = Normal(loc=mus, scale=sigmas+1e-10)
+    distributions = Normal(loc=mus, scale=sigmas)
     logpas = distributions.log_prob(data_acts)  # squeeze actions data
     return -(logpas * data_rets).mean()  # squeeze returns data
 
@@ -102,13 +102,16 @@ def train_epoch(params, opt_state, data):
 
 # SETUP
 key = jax.random.PRNGKey(19)
-env = gym.make('MountainCarContinuous-v0')
+env = gym.make('Pendulum-v1', g=9.81)
 buf = ReplayBuffer(
-    capacity=5000,
+    capacity=2048,
     obs_shape=env.observation_space.shape,
     act_shape=env.action_space.shape,
 )
-actor = GaussianPolicyNet(dim_acts=env.action_space.shape[0])
+actor = GaussianPolicyNet(
+    dim_acts=env.action_space.shape[0],
+    hidden_sizes=(128, 128),
+)
 params = actor.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
@@ -118,7 +121,7 @@ opt_state = optimizer.init(params)
 
 
 # LOOP
-num_epochs = 20
+num_epochs = 50
 ep, ep_return = 0, 0
 deposit_return, average_return = [], []
 pobs, _ = env.reset()
@@ -154,21 +157,21 @@ plt.plot(average_return)
 plt.show()
 
 # VALIDATION
-env = gym.make('MountainCarContinuous-v0', render_mode='human')
+env = gym.make('Pendulum-v1', g=9.81, render_mode='human')
 pobs, _ = env.reset()
 term, trunc = False, False
-for _ in range(1000):
+for _ in range(200):
     key, subkey = jax.random.split(key)
-    act, qvals = make_decision(
+    act, logp = make_decision(
         subkey,
         params,
         jnp.expand_dims(pobs, axis=0),
     )
-    nobs, rew, term, trunc, _ = env.step(int(act))
+    nobs, rew, term, trunc, _ = env.step(np.array(act))
     ep_return += rew
     pobs = nobs
     if term or trunc:
-        print(f"\n---return: {ep_return}---\n")
+        print(f"\n---Evaluation return: {ep_return}---\n")
         break
 env.close()
 
