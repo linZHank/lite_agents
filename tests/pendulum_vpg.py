@@ -17,8 +17,8 @@ class ReplayBuffer(object):
 
     def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
         # Variables
-        self.id = 0  # buffer instance index
-        self.ep_init_id = 0  # episode initial index
+        self.loc = 0  # buffer instance index
+        self.ep_init_loc = 0  # episode initial index
         # Properties
         self.capacity = capacity
         self.obs_shape = obs_shape
@@ -31,21 +31,21 @@ class ReplayBuffer(object):
         self.buf_rets = np.zeros_like(self.buf_rews)
 
     def store(self, observation, action, reward):
-        assert self.id < self.capacity
-        self.buf_obs[self.id] = observation
-        self.buf_acts[self.id] = action
-        self.buf_rews[self.id] = reward
-        self.id += 1
+        assert self.loc < self.capacity
+        self.buf_obs[self.loc] = observation
+        self.buf_acts[self.loc] = action
+        self.buf_rews[self.loc] = reward
+        self.loc += 1
 
     def finish_episode(self, discount=0.98):
         """ End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
-        # print(f"episode srart index: {self.ep_init_id}")
-        ep_slice = slice(self.ep_init_id, self.id)
+        # print(f"episode srart index: {self.ep_init_loc}")
+        ep_slice = slice(self.ep_init_loc, self.loc)
         self.buf_rets[ep_slice] = lfilter([1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0)[::-1]  # rewards to go
-        self.ep_init_id = self.id
-        # print(f"current index: {self.id}")
+        self.ep_init_loc = self.loc
+        # print(f"current index: {self.loc}")
 
     def extract(self):
         """Get replay experience
@@ -121,7 +121,7 @@ opt_state = optimizer.init(params)
 
 
 # LOOP
-num_epochs = 50
+num_epochs = 2
 ep, ep_return = 0, 0
 deposit_return, average_return = [], []
 pobs, _ = env.reset()

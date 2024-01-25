@@ -15,8 +15,8 @@ class ReplayBuffer(object):
 
     def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
         # Variables
-        self.id = 0  # buffer instance index
-        self.ep_init_id = 0  # episode initial index
+        self.loc = 0  # buffer instance index
+        self.ep_init_loc = 0  # episode initial index
         # Properties
         self.capacity = capacity
         self.obs_shape = obs_shape
@@ -29,25 +29,25 @@ class ReplayBuffer(object):
         self.buf_rets = np.zeros_like(self.buf_rews)
 
     def store(self, observation, action, reward):
-        assert self.id < self.capacity
-        self.buf_obs[self.id] = observation
-        self.buf_acts[self.id] = action
-        self.buf_rews[self.id] = reward
-        self.id += 1
+        assert self.loc < self.capacity
+        self.buf_obs[self.loc] = observation
+        self.buf_acts[self.loc] = action
+        self.buf_rews[self.loc] = reward
+        self.loc += 1
 
-    def finish_episode(self, discount=0.9):
+    def finish_episode(self, discount=0.98):
         """ End of episode process
-        Call this at the end of a trajectory, to compute the rewards-to-go.
+        Call this at the end of a trajectory, to compute the return-to-go.
         """
         def compute_rtgs(rews):
             return lfilter([1], [1, -discount], rews[::-1], axis=0,)[::-1]
 
-        ep_slice = slice(self.ep_init_id, self.id)
+        ep_slice = slice(self.ep_init_loc, self.loc)
         self.buf_rets[ep_slice] = compute_rtgs(self.buf_rews[ep_slice])
-        self.ep_init_id = self.id
+        self.ep_init_loc = self.loc
 
     def dump(self):
-        """Get replay experience
+        """Get on-policy replay experience
         """
         replay = Replay(
             self.buf_obs,
@@ -58,21 +58,36 @@ class ReplayBuffer(object):
         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
         return replay
 
-
-class MLP(nn.Module):
-    num_outputs: int
+class CategoricalPolicyNet(nn.Module):
+    """An MLP for discrete action space
+    """
+    num_acts: int
     hidden_sizes: tuple
 
     @nn.compact
-    def __call__(self, inputs):
-        dtype = jnp.float32
-        x = inputs.astype(dtype)
+    def __call__(self, obs):
+        x = obs.astype(jnp.float32)
         for i, size in enumerate(self.hidden_sizes):
             z = nn.Dense(features=size, name='hidden'+str(i+1), dtype=dtype)(x)
             x = nn.relu(z)
-        logits = nn.Dense(features=self.num_outputs, name='logits')(x)
+        logits = nn.Dense(features=self.num_acts, name='logits')(x)
         return logits
 
+class GaussianPolicyNet(nn.Module):
+    """An MLP for continuous action space
+    """
+    dim_acts: int
+    hidden_sizes: tuple = (64, 64)
+
+    @nn.compact
+    def __call__(self, obs):
+        x = obs.astype(jnp.float32)
+        for i, size in enumerate(self.hidden_sizes):
+            z = nn.Dense(features=size, name=f'hidden_{i+1}')(x)
+            x = nn.relu(z)
+        logits_mean = nn.Dense(features=self.dim_acts, name='mean')(x)
+        logits_lstd = nn.Dense(features=self.dim_acts, name='log_std')(x)
+        return logits_mean, logits_lstd
 
 class VPGAgent:
     """RL agent powered by REINFORCE
@@ -81,23 +96,26 @@ class VPGAgent:
     def __init__(
         self,
         seed,
-        obs_shape,
-        act_shape,
-        num_act=None,
+        env,
         hidden_sizes=(64, 64),
         learning_rate=3e-4,
     ):
         # Properties
         self.key = jax.random.PRNGKey(seed)
-        self.obs_shape = obs_shape
-        self.act_shape = act_shape
-        self.num_act = num_act
+        self.obs_shape = env.observation_space.shape
+        self.act_shape = env.action_space.shape
+        self.num_act = None
+        if not len(self.act_shape):  # discrete
+            self.num_act = env.action_space.n
         self.lr = learning_rate
         # Policy network
-        self.policy_net = MLP(num_act, hidden_sizes)
+        if self.num_act:
+            self.actor = CategoricalPolicyNet(self.num_act, hidden_sizes)
+        else:
+            self.actor = GaussianPolicyNet(self.obs_shape[0], hidden_sizes)
 
     def init_params(self):
-        parameters = self.policy_net.init(
+        parameters = self.actor.init(
             self.key,
             jnp.expand_dims(jnp.ones(self.obs_shape), axis=0)
         )
@@ -109,7 +127,7 @@ class VPGAgent:
 
     def make_decision(self, params, obs):
         self.key, subkey = jax.random.split(self.key)
-        logits = self.policy_net.apply(params, obs).squeeze(axis=0)
+        logits = self.actor.apply(params, obs).squeeze(axis=0)
         distribution = Categorical(logits=logits)
         act = distribution.sample(seed=subkey)
         logp_a = distribution.log_prob(act)
@@ -144,9 +162,7 @@ if __name__=='__main__':
     )
     agent = VPGAgent(
         seed=19,
-        obs_shape=env.observation_space.shape,
-        act_shape=env.action_space.shape,
-        num_act=env.action_space.n,
+        env=env,
     )
     params = agent.init_params()
     agent.init_optimizer(params)
