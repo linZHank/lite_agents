@@ -13,17 +13,20 @@ Replay = namedtuple('Replay', ['obs', 'act', 'ret'])
 class ReplayBuffer(object):
     """A simple on-policy replay buffer."""
 
-    def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
+    def __init__(self, capacity: int):
         # Variables
         self.loc = 0  # buffer instance index
         self.ep_init_loc = 0  # episode initial index
         # Properties
         self.capacity = capacity
-        self.obs_shape = obs_shape
-        self.act_shape = act_shape
-        self.num_act = num_act
+        self.shape_obs = env.observation_space.shape
+        self.shape_act = env.action_space.shape
+        if not len(self.shape_act):
+            self.num_act = env.action_space.n
+        else:
+            self.num_act = None
         # Replay storages
-        self.buf_obs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
+        self.buf_obs = np.zeros(shape=[capacity]+list(shape_obs), dtype=np.float32)
         self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_rets = np.zeros_like(self.buf_rews)
