@@ -13,52 +13,52 @@ Replay = namedtuple('Replay', ['obs', 'act', 'ret'])
 class ReplayBuffer(object):
     """A simple on-policy replay buffer."""
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, act_n=None):
         # Variables
         self.loc = 0  # buffer instance index
         self.ep_init_loc = 0  # episode initial index
         # Properties
         self.capacity = capacity
-        self.shape_obs = env.observation_space.shape
-        self.shape_act = env.action_space.shape
-        if not len(self.shape_act):
-            self.num_act = env.action_space.n
-        else:
-            self.num_act = None
+        self.obs_shape = obs_shape
+        self.act_shape = act_shape
+        self.act_n = act_n
         # Replay storages
-        self.buf_obs = np.zeros(shape=[capacity]+list(shape_obs), dtype=np.float32)
-        self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
-        self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
-        self.buf_rets = np.zeros_like(self.buf_rews)
+        self.buf_obs = np.zeros(shape=[capacity]+list(self.obs_shape), dtype=np.float32)
+        if self.act_n:  # discrete action space
+            self.buf_act = np.zeros(shape=(capacity, 1), dtype=np.float32)
+        else:
+            self.buf_act = np.zeros(shape=[capacity]+list(self.act_shape), dtype=np.float32)
+        self.buf_rew = np.zeros(shape=(capacity, 1), dtype=np.float32)
+        self.buf_ret = np.zeros_like(self.buf_rew)
 
     def store(self, observation, action, reward):
         assert self.loc < self.capacity
         self.buf_obs[self.loc] = observation
-        self.buf_acts[self.loc] = action
-        self.buf_rews[self.loc] = reward
+        self.buf_act[self.loc] = action
+        self.buf_rew[self.loc] = reward
         self.loc += 1
 
     def finish_episode(self, discount=0.98):
         """ End of episode process
         Call this at the end of a trajectory, to compute the return-to-go.
         """
-        def compute_rtgs(rews):
-            return lfilter([1], [1, -discount], rews[::-1], axis=0,)[::-1]
+        def compute_rtgs(rewards):
+            return lfilter([1], [1, -discount], rewards[::-1], axis=0,)[::-1]
 
         ep_slice = slice(self.ep_init_loc, self.loc)
-        self.buf_rets[ep_slice] = compute_rtgs(self.buf_rews[ep_slice])
+        self.buf_ret[ep_slice] = compute_rtgs(self.buf_rew[ep_slice])
         self.ep_init_loc = self.loc
 
     def dump(self):
-        """Get on-policy replay experience
+        """Get all on-policy replay experience
         """
         replay = Replay(
             self.buf_obs,
-            self.buf_acts,
-            self.buf_rets,
+            self.buf_act,
+            self.buf_ret,
         )
         # clean up replay buffer for next epoch
-        self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
+        self.__init__(self.capacity, self.obs_shape, self.act_shape, self.act_n)
         return replay
 
 class CategoricalPolicyNet(nn.Module):
