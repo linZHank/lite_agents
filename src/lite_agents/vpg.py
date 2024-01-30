@@ -52,11 +52,7 @@ class ReplayBuffer(object):
     def dump(self):
         """Get all on-policy replay experience
         """
-        replay = Replay(
-            self.buf_obs,
-            self.buf_act,
-            self.buf_ret,
-        )
+        replay = Replay(self.buf_obs, self.buf_act, self.buf_ret)
         # clean up replay buffer for next epoch
         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.act_n)
         return replay
@@ -64,36 +60,36 @@ class ReplayBuffer(object):
 class CategoricalPolicyNet(nn.Module):
     """An MLP for discrete action space
     """
-    num_acts: int
+    act_n: int
     hidden_sizes: tuple
 
     @nn.compact
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray):
         x = obs.astype(jnp.float32)
         for i, size in enumerate(self.hidden_sizes):
-            z = nn.Dense(features=size, name='hidden'+str(i+1), dtype=dtype)(x)
+            z = nn.Dense(features=size, name='hidden'+str(i+1))(x)
             x = nn.relu(z)
-        logits = nn.Dense(features=self.num_acts, name='logits')(x)
+        logits = nn.Dense(features=self.act_n, name='logits')(x)
         return logits
 
 class GaussianPolicyNet(nn.Module):
     """An MLP for continuous action space
     """
-    dim_acts: int
+    act_shape: int
     hidden_sizes: tuple = (64, 64)
 
     @nn.compact
-    def __call__(self, obs):
+    def __call__(self, obs: np.ndarray):
         x = obs.astype(jnp.float32)
         for i, size in enumerate(self.hidden_sizes):
             z = nn.Dense(features=size, name=f'hidden_{i+1}')(x)
             x = nn.relu(z)
-        logits_mean = nn.Dense(features=self.dim_acts, name='mean')(x)
-        logits_lstd = nn.Dense(features=self.dim_acts, name='log_std')(x)
+        logits_mean = nn.Dense(features=self.act_shape, name='mean')(x)
+        logits_lstd = nn.Dense(features=self.act_shape, name='log_std')(x)
         return logits_mean, logits_lstd
 
 class VPGAgent:
-    """RL agent powered by REINFORCE
+    """On-Policy agent powered by REINFORCE (Vanilla Policy Gradient)
 
     """
     def __init__(
@@ -107,13 +103,13 @@ class VPGAgent:
         self.key = jax.random.PRNGKey(seed)
         self.obs_shape = env.observation_space.shape
         self.act_shape = env.action_space.shape
-        self.num_act = None
+        self.act_n = None
         if not len(self.act_shape):  # discrete
-            self.num_act = env.action_space.n
+            self.act_n = env.action_space.n
         self.lr = learning_rate
         # Policy network
-        if self.num_act:
-            self.actor = CategoricalPolicyNet(self.num_act, hidden_sizes)
+        if self.act_n:
+            self.actor = CategoricalPolicyNet(self.act_n, hidden_sizes)
         else:
             self.actor = GaussianPolicyNet(self.obs_shape[0], hidden_sizes)
 
@@ -137,7 +133,7 @@ class VPGAgent:
         return act, logp_a
 
     def loss_fn(self, params, replay):
-        logits = self.policy_net.apply(params, replay.obs)
+        logits = self.actor.apply(params, replay.obs)
         distributions = Categorical(logits=logits)
         logpas = distributions.log_prob(replay.act.squeeze())  # squeeze actions data
         return -(logpas * replay.ret.squeeze()).mean()  # squeeze returns data
@@ -161,11 +157,12 @@ if __name__=='__main__':
         capacity=500,
         obs_shape=env.observation_space.shape,
         act_shape=env.action_space.shape,
-        num_act=env.action_space.n,
+        act_n=env.action_space.n,
     )
     agent = VPGAgent(
         seed=19,
         env=env,
+        hidden_sizes=(128, 128),
     )
     params = agent.init_params()
     agent.init_optimizer(params)
@@ -176,7 +173,7 @@ if __name__=='__main__':
     pobs, _ = env.reset()
     for e in range(num_epochs):
         for st in range(buffer.capacity):
-            act, logp = agent.make_decision(
+            act, _ = agent.make_decision(
                 params,
                 jnp.expand_dims(pobs, axis=0),
             )
