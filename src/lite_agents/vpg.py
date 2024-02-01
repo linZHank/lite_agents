@@ -112,6 +112,10 @@ class VPGAgent:
             self.actor = CategoricalPolicyNet(self.act_n, hidden_sizes)
         else:
             self.actor = GaussianPolicyNet(self.obs_shape[0], hidden_sizes)
+        # JIT compile
+        self.loss_fn = jax.jit(self.loss_fn)
+        self.train_epoch = jax.jit(self.train_epoch)
+
 
     def init_params(self):
         parameters = self.actor.init(
