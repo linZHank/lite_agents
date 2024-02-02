@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import optax
-from distrax import Categorical
+from distrax import Categorical, Normal
 from scipy.signal import lfilter
 
 
@@ -113,7 +113,12 @@ class VPGAgent:
         else:
             self.actor = GaussianPolicyNet(self.obs_shape[0], hidden_sizes)
         # JIT compile
-        self.loss_fn = jax.jit(self.loss_fn)
+        if self.act_n:
+            self.loss_fn = jax.jit(self.categorical_loss_fn)
+        else:
+            self.loss_fn = jax.jit(self.normal_loss_fn)
+        # self.categorical_loss_fn = jax.jit(self.categorical_loss_fn)
+        # self.normal_loss_fn = jax.jit(self.normal_loss_fn)
         self.train_epoch = jax.jit(self.train_epoch)
 
 
@@ -130,17 +135,30 @@ class VPGAgent:
 
     def make_decision(self, params, obs):
         self.key, subkey = jax.random.split(self.key)
-        logits = self.actor.apply(params, obs).squeeze(axis=0)
-        distribution = Categorical(logits=logits)
+        if self.act_n:
+            logits = self.actor.apply(params, obs).squeeze(axis=0)
+            distribution = Categorical(logits=logits)
+        else:
+            logits_mu, logits_logsigma = self.actor.apply(params, obs)
+            logits_mu = logits_mu.squeeze(axis=0)
+            logits_sigma = jnp.exp(logits_logsigma.squeeze(axis=0))
+            distribution = Normal(loc=logits_mu, scale=logits_sigma+1e-10)
         act = distribution.sample(seed=subkey)
-        logp_a = distribution.log_prob(act)
-        return act, logp_a
+        logprob_a = distribution.log_prob(act)
+        return act, logprob_a
 
-    def loss_fn(self, params, replay):
+    def categorical_loss_fn(self, params, replay):
         logits = self.actor.apply(params, replay.obs)
         distributions = Categorical(logits=logits)
         logpas = distributions.log_prob(replay.act.squeeze())  # squeeze actions data
         return -(logpas * replay.ret.squeeze()).mean()  # squeeze returns data
+
+    def normal_loss_fn(self, params, replay):
+        logits_mu, logits_logsigma = self.actor.apply(params, replay.obs)
+        logits_sigma = jnp.exp(logits_logsigma)
+        distributions = Normal(loc=logits_mu, scale=logits_sigma)
+        logprob_a_s = distributions.log_prob(replay.act)
+        return -(logprob_a_s * replay.ret).mean()  # squeeze returns data
 
     def train_epoch(self, params, replay):
         loss_grad_fn = jax.value_and_grad(self.loss_fn)
