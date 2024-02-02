@@ -49,7 +49,7 @@ class ReplayBuffer(object):
         self.buf_ret[ep_slice] = compute_rtgs(self.buf_rew[ep_slice])
         self.ep_init_loc = self.loc
 
-    def dump(self):
+    def extract(self):
         """Get all on-policy replay experience
         """
         replay = Replay(self.buf_obs, self.buf_act, self.buf_ret)
@@ -111,7 +111,7 @@ class VPGAgent:
         if self.act_n:
             self.actor = CategoricalPolicyNet(self.act_n, hidden_sizes)
         else:
-            self.actor = GaussianPolicyNet(self.obs_shape[0], hidden_sizes)
+            self.actor = GaussianPolicyNet(self.act_shape[0], hidden_sizes)
         # JIT compile
         if self.act_n:
             self.loss_fn = jax.jit(self.categorical_loss_fn)
@@ -174,12 +174,12 @@ if __name__=='__main__':
     import matplotlib.pyplot as plt
     # SETUP
     key = jax.random.PRNGKey(19)
-    env = gym.make('CartPole-v1')
+    env = gym.make('Pendulum-v1', g=9.81)
     buffer = ReplayBuffer(
-        capacity=500,
+        capacity=2048,
         obs_shape=env.observation_space.shape,
         act_shape=env.action_space.shape,
-        act_n=env.action_space.n,
+        # act_n=env.action_space.n,
     )
     agent = VPGAgent(
         seed=19,
@@ -200,7 +200,7 @@ if __name__=='__main__':
                 jnp.expand_dims(pobs, axis=0),
             )
             # print(act, logp)
-            nobs, rew, term, trunc, _ = env.step(int(act))
+            nobs, rew, term, trunc, _ = env.step(np.array(act))
             buffer.store(pobs, act, rew)
             ep_return += rew
             pobs = nobs
@@ -213,7 +213,7 @@ if __name__=='__main__':
                 ep_return = 0
                 pobs, _ = env.reset()
         buffer.finish_episode()
-        replay = buffer.dump()
+        replay = buffer.extract()
         # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
         params, loss_val = agent.train_epoch(params, replay)
         print(f"\n---epoch {e+1} loss: {loss_val}---\n")
@@ -222,15 +222,15 @@ if __name__=='__main__':
     plt.show()
 
     # VALIDATION
-    env = gym.make('CartPole-v1', render_mode='human')
+    env = gym.make('Pendulum-v1', g=9.81, render_mode='human')
     pobs, _ = env.reset()
     term, trunc = False, False
-    for _ in range(500):
+    for _ in range(200):
         act, qvals = agent.make_decision(
             params,
             jnp.expand_dims(pobs, axis=0),
         )
-        nobs, rew, term, trunc, _ = env.step(int(act))
+        nobs, rew, term, trunc, _ = env.step(np.array(act))
         ep_return += rew
         pobs = nobs
         if term or trunc:
