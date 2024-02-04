@@ -174,9 +174,11 @@ if __name__=='__main__':
     import matplotlib.pyplot as plt
     # SETUP
     key = jax.random.PRNGKey(19)
-    env = gym.make('Pendulum-v1', g=9.81)
+    # env = gym.make('CartPole-v1')
+    # env = gym.make('Pendulum-v1', g=9.81)
+    env = gym.make('LunarLander-v2', continuous=True)
     buffer = ReplayBuffer(
-        capacity=2048,
+        capacity=4096,
         obs_shape=env.observation_space.shape,
         act_shape=env.action_space.shape,
         # act_n=env.action_space.n,
@@ -199,7 +201,7 @@ if __name__=='__main__':
                 params,
                 jnp.expand_dims(pobs, axis=0),
             )
-            # print(act, logp)
+            # nobs, rew, term, trunc, _ = env.step(int(act))
             nobs, rew, term, trunc, _ = env.step(np.array(act))
             buffer.store(pobs, act, rew)
             ep_return += rew
@@ -222,14 +224,17 @@ if __name__=='__main__':
     plt.show()
 
     # VALIDATION
-    env = gym.make('Pendulum-v1', g=9.81, render_mode='human')
+    # env = gym.make('CartPole-v1', render_mode='human')
+    # env = gym.make('Pendulum-v1', g=9.81, render_mode='human')
+    env = gym.make('LunarLander-v2', continuous=True, render_mode='human')
     pobs, _ = env.reset()
     term, trunc = False, False
-    for _ in range(200):
+    for _ in range(1000):
         act, qvals = agent.make_decision(
             params,
             jnp.expand_dims(pobs, axis=0),
         )
+        # nobs, rew, term, trunc, _ = env.step(int(act))
         nobs, rew, term, trunc, _ = env.step(np.array(act))
         ep_return += rew
         pobs = nobs
