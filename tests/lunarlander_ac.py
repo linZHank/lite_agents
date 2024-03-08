@@ -83,6 +83,20 @@ class GaussianPolicyNet(nn.Module):
         logits_lstd = nn.Dense(features=self.dim_acts, name='log_std')(x)
         return logits_mean, logits_lstd
 
+class ValueNet(nn.Module):
+    """An MLP fr continuous action space
+    """
+    hidden_sizes: tuple = (64, 64)
+
+    @nn.compact
+    def __call__(self, obs):
+        x = obs.astype(jnp.float32)
+        for i, size in enumerate(self.hidden_sizes):
+            z = nn.Dense(features=size, name=f'hidden_{i+1}')(x)
+            x = nn.relu(z)
+        logits = nn.Dense(features=1, name='value')(x)
+        return logits
+
 def make_decision(key, params, obs):
     mu, log_sigma = actor.apply(params, obs)
     mu = mu.squeeze(axis=0)
@@ -120,66 +134,74 @@ actor = GaussianPolicyNet(
     dim_acts=env.action_space.shape[0],
     hidden_sizes=(128, 128),
 )
-params = actor.init(
+params_a = actor.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
-optimizer = optax.adam(3e-4)
-opt_state = optimizer.init(params)
+optimizer_a = optax.adam(3e-4)
+opt_state_a = optimizer_a.init(params_a)
+
+critic = ValueNet(hidden_sizes=(128, 128))
+params_c = critic.init(
+    key,
+    jnp.expand_dims(env.observation_space.sample(), axis=0)
+)
+optimizer_c = optax.adam(3e-4)
+opt_state_c = optimizer_c.init(params_c)
 
 
 # LOOP
-num_epochs = 20
-ep, ep_return = 0, 0
-deposit_return, average_return = [], []
-pobs, _ = env.reset()
-key, subkey = jax.random.split(key)
-for e in range(num_epochs):
-    for st in range(buf.capacity):
-        key, subkey = jax.random.split(key)
-        act, logp = make_decision(
-            subkey,
-            params,
-            jnp.expand_dims(pobs, axis=0),
-        )
-        # print(act, logp)
-        nobs, rew, term, trunc, _ = env.step(np.array(act))
-        buf.store(pobs, act, rew)
-        ep_return += rew
-        pobs = nobs
-        if term or trunc:
-            buf.finish_episode()
-            deposit_return.append(ep_return)
-            average_return.append(sum(deposit_return) / len(deposit_return))
-            print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
-            ep += 1
-            ep_return = 0
-            pobs, _ = env.reset()
-    buf.finish_episode()
-    rep = buf.extract()
-    # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
-    params, loss_val, opt_state = train_epoch(params, opt_state, rep)
-    print(f"\n---epoch {e+1} loss: {loss_val}---\n")
-env.close()
-plt.plot(average_return)
-plt.show()
-
-# VALIDATION
-env = gym.make('LunarLander-v2', continuous=True, render_mode='human')
-pobs, _ = env.reset()
-term, trunc = False, False
-for _ in range(1000):
-    key, subkey = jax.random.split(key)
-    act, logp = make_decision(
-        subkey,
-        params,
-        jnp.expand_dims(pobs, axis=0),
-    )
-    nobs, rew, term, trunc, _ = env.step(np.array(act))
-    ep_return += rew
-    pobs = nobs
-    if term or trunc:
-        print(f"\n---Evaluation return: {ep_return}---\n")
-        break
-env.close()
-
+# num_epochs = 20
+# ep, ep_return = 0, 0
+# deposit_return, average_return = [], []
+# pobs, _ = env.reset()
+# key, subkey = jax.random.split(key)
+# for e in range(num_epochs):
+#     for st in range(buf.capacity):
+#         key, subkey = jax.random.split(key)
+#         act, logp = make_decision(
+#             subkey,
+#             params,
+#             jnp.expand_dims(pobs, axis=0),
+#         )
+#         # print(act, logp)
+#         nobs, rew, term, trunc, _ = env.step(np.array(act))
+#         buf.store(pobs, act, rew)
+#         ep_return += rew
+#         pobs = nobs
+#         if term or trunc:
+#             buf.finish_episode()
+#             deposit_return.append(ep_return)
+#             average_return.append(sum(deposit_return) / len(deposit_return))
+#             print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+#             ep += 1
+#             ep_return = 0
+#             pobs, _ = env.reset()
+#     buf.finish_episode()
+#     rep = buf.extract()
+#     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+#     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
+#     print(f"\n---epoch {e+1} loss: {loss_val}---\n")
+# env.close()
+# plt.plot(average_return)
+# plt.show()
+#
+# # VALIDATION
+# env = gym.make('LunarLander-v2', continuous=True, render_mode='human')
+# pobs, _ = env.reset()
+# term, trunc = False, False
+# for _ in range(1000):
+#     key, subkey = jax.random.split(key)
+#     act, logp = make_decision(
+#         subkey,
+#         params,
+#         jnp.expand_dims(pobs, axis=0),
+#     )
+#     nobs, rew, term, trunc, _ = env.step(np.array(act))
+#     ep_return += rew
+#     pobs = nobs
+#     if term or trunc:
+#         print(f"\n---Evaluation return: {ep_return}---\n")
+#         break
+# env.close()
+#
