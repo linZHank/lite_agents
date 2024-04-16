@@ -16,13 +16,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "numpy >=1.21.0",
-    "jax[cuda12_pip] >=0.4.13",
-    "flax >=0.6.11",
-    "distrax >=0.1.4",
-    "optax >=0.1.5",
-    "matplotlib >=3.7.2",
-    "gymnasium[classic-control] >=0.28.1",
+    "flax>=0.6.11",
+    "distrax>=0.1.4",
+    "optax>=0.1.5",
+    "matplotlib>=3.7.2",
+    "gymnasium[classic-control]>=0.28.1",
 ]
 [project.urls]
 Homepage = "https://github.com/linzhank/lite_agents"
