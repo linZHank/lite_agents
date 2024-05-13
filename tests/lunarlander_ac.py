@@ -134,51 +134,51 @@ actor = GaussianPolicyNet(
     dim_acts=env.action_space.shape[0],
     hidden_sizes=(128, 128),
 )
-params_a = actor.init(
+params_actor = actor.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
-optimizer_a = optax.adam(3e-4)
-opt_state_a = optimizer_a.init(params_a)
+optimizer_actor = optax.adam(3e-4)
+opt_state_actor = optimizer_actor.init(params_actor)
 
 critic = ValueNet(hidden_sizes=(128, 128))
-params_c = critic.init(
+params_critic = critic.init(
     key,
     jnp.expand_dims(env.observation_space.sample(), axis=0)
 )
-optimizer_c = optax.adam(3e-4)
-opt_state_c = optimizer_c.init(params_c)
+optimizer_critic = optax.adam(3e-4)
+opt_state_c = optimizer_critic.init(params_critic)
 
 
 # LOOP
-# num_epochs = 20
-# ep, ep_return = 0, 0
-# deposit_return, average_return = [], []
-# pobs, _ = env.reset()
-# key, subkey = jax.random.split(key)
-# for e in range(num_epochs):
-#     for st in range(buf.capacity):
-#         key, subkey = jax.random.split(key)
-#         act, logp = make_decision(
-#             subkey,
-#             params,
-#             jnp.expand_dims(pobs, axis=0),
-#         )
-#         # print(act, logp)
-#         nobs, rew, term, trunc, _ = env.step(np.array(act))
-#         buf.store(pobs, act, rew)
-#         ep_return += rew
-#         pobs = nobs
-#         if term or trunc:
-#             buf.finish_episode()
-#             deposit_return.append(ep_return)
-#             average_return.append(sum(deposit_return) / len(deposit_return))
-#             print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
-#             ep += 1
-#             ep_return = 0
-#             pobs, _ = env.reset()
-#     buf.finish_episode()
-#     rep = buf.extract()
+num_epochs = 20
+ep, ep_return = 0, 0
+deposit_return, average_return = [], []
+pobs, _ = env.reset()
+key, subkey = jax.random.split(key)
+for e in range(num_epochs):
+    for st in range(buf.capacity):
+        key, subkey = jax.random.split(key)
+        act, logp = make_decision(
+            subkey,
+            params,
+            jnp.expand_dims(pobs, axis=0),
+        )
+        print(act, logp)
+        nobs, rew, term, trunc, _ = env.step(np.array(act))
+        buf.store(pobs, act, rew)
+        ep_return += rew
+        pobs = nobs
+        if term or trunc:
+            buf.finish_episode()
+            deposit_return.append(ep_return)
+            average_return.append(sum(deposit_return) / len(deposit_return))
+            print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+            ep += 1
+            ep_return = 0
+            pobs, _ = env.reset()
+    buf.finish_episode()  # last episode may be cut off due to max steps
+    rep = buf.extract()
 #     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
 #     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
 #     print(f"\n---epoch {e+1} loss: {loss_val}---\n")
