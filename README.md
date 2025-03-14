@@ -1,19 +1,25 @@
 # lite_agents
+
 This project is extremely inspired by [OpenAI Spinning Up](https://spinningup.openai.com/en/latest/).
 
 ## GPU [jax](https://github.com/google/jax) Installation
-```bash
-pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+
+```sh
+pip install -U "jax[cuda12]"
 ```
 
 ## Installation
-```bash
+
+> Using [pip](https://pip.pypa.io/en/stable/) as Python package manager.
+
+```sh
 git clone https://github.com/linzhank/lite_agents.git
 cd lite_agents
 pip install -e .
 ```
 
 ## Example
+
 ```python
 from lite_agents.dqn import ReplayBuffer, DQNAgent
 import gymnasium as gym
