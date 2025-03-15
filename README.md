@@ -2,15 +2,29 @@
 
 This project is extremely inspired by [OpenAI Spinning Up](https://spinningup.openai.com/en/latest/).
 
-## GPU [jax](https://github.com/google/jax) Installation
+## Installation
+
+1. [Miniforge](https://github.com/conda-forge/miniforge)
+To create a environment for this project (let's call it lta)
+
+```sh
+mamba create -n lta python=3.13
+mamba activate lta
+```
+
+2. [JAX](https://docs.jax.dev/en/latest/)
 
 ```sh
 pip install -U "jax[cuda12]"
 ```
 
-## Installation
+3. [swig](https://github.com/nightlark/swig-pypi)
 
-> Using [pip](https://pip.pypa.io/en/stable/) as Python package manager.
+```sh
+mamba install swig
+```
+
+4. Other dependencies
 
 ```sh
 git clone https://github.com/linzhank/lite_agents.git
