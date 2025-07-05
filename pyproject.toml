@@ -18,6 +18,8 @@ cpu = [
 ]
 dev = [
     "jaxtyping>=0.3.2",
+    "matplotlib>=3.10.3",
+    "pyqt6>=6.9.1",
     "pytest>=8.4.1",
     "torch>=2.7.1",
     "torchvision>=0.22.1",
