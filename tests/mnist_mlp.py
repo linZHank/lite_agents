@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Int, PyTree  # https://github.com/google/jaxtyping
 from flax import linen as nn
-from flax.training import train_state 
+from flax.training import train_state
 import optax
 
 
