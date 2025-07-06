@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision.transforms import v2
 
+from jax import random
 import jax.numpy as jnp
 from flax import nnx  # The Flax NNX API.
 from functools import partial
@@ -82,3 +83,8 @@ class CNN(nnx.Module):
 model = CNN(rngs=nnx.Rngs(0))
 # Visualize it.
 nnx.display(model)
+# Sanity test
+dummy_x = random.uniform(key=random.key(0), shape=(3, 28, 28, 1))
+print(dummy_x.shape)
+dummy_preds = model(dummy_x)
+print(dummy_preds.shape)
