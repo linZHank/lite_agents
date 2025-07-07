@@ -102,6 +102,7 @@ nnx.display(optimizer)
 
 
 # Define training steps
+@nnx.jit
 def loss_fn(model: VanillaConvNet, batch):
     logits = model(torch.permute(batch[0], (0, 2, 3, 1)).numpy())
     loss = optax.softmax_cross_entropy_with_integer_labels(
@@ -123,16 +124,14 @@ def train_step(
     optimizer.update(grads)  # In-place updates.
 
 
-#
-#
-# @nnx.jit
-# def eval_step(
-#     model: VanillaConvNet, metrics: nnx.MultiMetric, images_batch, labels_batch
-# ):
-#     loss, logits = loss_fn(model, images_batch, labels_batch)
-#     metrics.update(loss=loss, logits=logits, labels=labels_batch)  # In-place updates.
-#
-#
+@nnx.jit
+def eval_step(model: VanillaConvNet, metrics: nnx.MultiMetric, batch):
+    loss, logits = loss_fn(model, batch)
+    metrics.update(
+        loss=loss, logits=logits, labels=jnp.array(batch[1], jnp.int32)
+    )  # In-place updates.
+
+
 # # Train model
 # metrics_history = {
 #     "train_loss": [],
