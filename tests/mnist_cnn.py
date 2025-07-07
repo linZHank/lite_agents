@@ -110,17 +110,19 @@ def loss_fn(model: VanillaConvNet, batch):
     return loss, logits
 
 
-#
-#
-# @nnx.jit
-# def train_step(
-#     model: VanillaConvNet, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric, batch
-# ):
-#     """Train for a single step."""
-#     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
-#     (loss, logits), grads = grad_fn(model, batch)
-#     metrics.update(loss=loss, logits=logits, labels=batch["label"])  # In-place updates.
-#     optimizer.update(grads)  # In-place updates.
+@nnx.jit
+def train_step(
+    model: VanillaConvNet, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric, batch
+):
+    """Train for a single step."""
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+    (loss, logits), grads = grad_fn(model, batch)
+    metrics.update(
+        loss=loss, logits=logits, labels=jnp.array(batch[1], jnp.int32)
+    )  # In-place updates.
+    optimizer.update(grads)  # In-place updates.
+
+
 #
 #
 # @nnx.jit
