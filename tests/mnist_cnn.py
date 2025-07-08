@@ -2,6 +2,8 @@ import pytest
 from functools import partial
 
 from pathlib import Path
+import numpy as np
+
 import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets
@@ -16,7 +18,7 @@ import matplotlib.pyplot as plt
 
 # Hyper-parameters
 BATCH_SIZE = 64
-NUM_EPOCHS = 5
+MAX_EPOCHS = 2
 LEARNING_RATE = 3e-4
 MOMENTUM = 0.9
 SEED = 19
@@ -102,78 +104,89 @@ nnx.display(optimizer)
 
 
 # Define training steps
-@nnx.jit
-def loss_fn(model: VanillaConvNet, batch):
-    logits = model(torch.permute(batch[0], (0, 2, 3, 1)).numpy())
+def loss_fn(
+    model: VanillaConvNet, features_array: np.ndarray, labels_array: np.ndarray
+):
+    logits = model(features_array)
     loss = optax.softmax_cross_entropy_with_integer_labels(
-        logits=logits, labels=batch[1].numpy()
+        logits=logits, labels=labels_array
     ).mean()
     return loss, logits
 
 
 @nnx.jit
 def train_step(
-    model: VanillaConvNet, optimizer: nnx.Optimizer, metrics: nnx.MultiMetric, batch
+    model: VanillaConvNet,
+    optimizer: nnx.Optimizer,
+    metrics: nnx.MultiMetric,
+    batch_features: np.ndarray,
+    batch_labels: np.ndarray,
 ):
     """Train for a single step."""
     grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
-    (loss, logits), grads = grad_fn(model, batch)
-    metrics.update(
-        loss=loss, logits=logits, labels=jnp.array(batch[1], jnp.int32)
-    )  # In-place updates.
+    (loss, logits), grads = grad_fn(model, batch_features, batch_labels)
+    metrics.update(loss=loss, logits=logits, labels=batch_labels)  # In-place updates.
     optimizer.update(grads)  # In-place updates.
 
 
 @nnx.jit
-def eval_step(model: VanillaConvNet, metrics: nnx.MultiMetric, batch):
-    loss, logits = loss_fn(model, batch)
-    metrics.update(
-        loss=loss, logits=logits, labels=jnp.array(batch[1], jnp.int32)
-    )  # In-place updates.
+def eval_step(
+    model: VanillaConvNet,
+    metrics: nnx.MultiMetric,
+    batch_features: np.ndarray,
+    batch_labels: np.ndarray,
+):
+    loss, logits = loss_fn(model, batch_features, batch_labels)
+    metrics.update(loss=loss, logits=logits, labels=batch_labels)  # In-place updates.
 
 
-# # Train model
-# metrics_history = {
-#     "train_loss": [],
-#     "train_accuracy": [],
-#     "test_loss": [],
-#     "test_accuracy": [],
-# }
-#
-# for step, batch in enumerate(loader_train):
-#     # Run the optimization for one step and make a stateful update to the following:
-#     # - The train state's model parameters
-#     # - The optimizer state
-#     # - The training loss and accuracy batch metrics
-#     train_step(model, optimizer, metrics, batch)
-#
-#     if step > 0 and (
-#         step % eval_every == 0 or step == train_steps - 1
-#     ):  # One training epoch has passed.
-#         # Log the training metrics.
-#         for metric, value in metrics.compute().items():  # Compute the metrics.
-#             metrics_history[f"train_{metric}"].append(value)  # Record the metrics.
-#         metrics.reset()  # Reset the metrics for the test set.
-#
-#         # Compute the metrics on the test set after each training epoch.
-#         for test_batch in test_ds.as_numpy_iterator():
-#             eval_step(model, metrics, test_batch)
-#
-#         # Log the test metrics.
-#         for metric, value in metrics.compute().items():
-#             metrics_history[f"test_{metric}"].append(value)
-#         metrics.reset()  # Reset the metrics for the next training epoch.
-#
-#         clear_output(wait=True)
-#         # Plot loss and accuracy in subplots
-#         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-#         ax1.set_title("Loss")
-#         ax2.set_title("Accuracy")
-#         for dataset in ("train", "test"):
-#             ax1.plot(metrics_history[f"{dataset}_loss"], label=f"{dataset}_loss")
-#             ax2.plot(
-#                 metrics_history[f"{dataset}_accuracy"], label=f"{dataset}_accuracy"
-#             )
-#         ax1.legend()
-#         ax2.legend()
-#         plt.show()
+# Train model
+metrics_history = {
+    "train_loss": [],
+    "train_accuracy": [],
+    "test_loss": [],
+    "test_accuracy": [],
+}
+
+for ep in range(MAX_EPOCHS):
+    # train 1 epoch
+    for i, train_batch in enumerate(loader_train):
+        features_train = torch.permute(train_batch[0], (0, 2, 3, 1)).numpy()
+        labels_train = train_batch[1].numpy()
+        train_step(
+            model,
+            optimizer,
+            metrics,
+            features_train,
+            labels_train,
+        )
+        print(
+            f"batch: {i + 1} loss: {metrics.compute()['loss']}, accuracy: {metrics.compute()['accuracy']}"
+        )
+    # Log training metrics
+    for metric, value in metrics.compute().items():  # Compute the metrics.
+        metrics_history[f"train_{metric}"].append(value)  # Record the metrics.
+    metrics.reset()  # Reset the metrics for the test set.
+    # Evaluate 1 epoch
+    for i, eval_batch in enumerate(loader_test):
+        features_eval = torch.permute(eval_batch[0], (0, 2, 3, 1)).numpy()
+        labels_eval = eval_batch[1].numpy()
+        eval_step(model, metrics, features_eval, labels_eval)
+    # Log the test metrics.
+    for metric, value in metrics.compute().items():
+        metrics_history[f"test_{metric}"].append(value)
+    metrics.reset()  # Reset the metrics for the next training epoch.
+
+    print(f"Epoch {ep} metrics: {metrics_history}")
+
+
+# Plot loss and accuracy in subplots
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+ax1.set_title("Loss")
+ax2.set_title("Accuracy")
+for dataset in ("train", "test"):
+    ax1.plot(metrics_history[f"{dataset}_loss"], label=f"{dataset}_loss")
+    ax2.plot(metrics_history[f"{dataset}_accuracy"], label=f"{dataset}_accuracy")
+ax1.legend()
+ax2.legend()
+plt.show()
