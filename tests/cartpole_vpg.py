@@ -3,14 +3,15 @@ from collections import namedtuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-import flax.linen as nn
+from flax import nnx
 import optax
 from distrax import Categorical
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
 
-Replay = namedtuple('Replay', ['obs', 'act', 'ret'])
+Replay = namedtuple("Replay", ["obs", "act", "ret"])
+
 
 class OnPolicyReplayBuffer(object):
     """A simple on-policy replay buffer."""
@@ -25,7 +26,7 @@ class OnPolicyReplayBuffer(object):
         self.act_shape = act_shape
         self.num_act = num_act
         # Replay storages
-        self.buf_obs = np.zeros(shape=[capacity]+list(obs_shape), dtype=np.float32)
+        self.buf_obs = np.zeros(shape=[capacity] + list(obs_shape), dtype=np.float32)
         self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_rets = np.zeros_like(self.buf_rews)
@@ -38,18 +39,19 @@ class OnPolicyReplayBuffer(object):
         self.id += 1
 
     def finish_episode(self, discount=0.9):
-        """ End of episode process
+        """End of episode process
         Call this at the end of a trajectory, to compute the rewards-to-go.
         """
         # print(f"episode srart index: {self.ep_init_id}")
         ep_slice = slice(self.ep_init_id, self.id)
-        self.buf_rets[ep_slice] = lfilter([1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0)[::-1]  # rewards to go
+        self.buf_rets[ep_slice] = lfilter(
+            [1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0
+        )[::-1]  # rewards to go
         self.ep_init_id = self.id
         # print(f"current index: {self.id}")
 
     def extract(self):
-        """Get replay experience
-        """
+        """Get replay experience"""
         replay = Replay(
             self.buf_obs,
             self.buf_acts,
@@ -59,19 +61,26 @@ class OnPolicyReplayBuffer(object):
         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
         return replay
 
-class MLP(nn.Module):
-    num_outputs: int
-    hidden_sizes: tuple = (64, 64)
 
-    @nn.compact
-    def __call__(self, inputs):
-        dtype = jnp.float32
-        x = inputs.astype(dtype)
+class MultiLayerPerceptron(nnx.Module):
+    """A simple fully-connected Neural Network model"""
+
+    def __init__(self, *, rng: nnx.Rngs):
+        self.linear1 = nnx.Linear(4, 128)
+        self.linear2 = nnx.Linear(128, 128)
+        self.linear3 = nnx.Linear(128, 2)
+
+    num_outputs: int
+    hidden_sizes: tuple = (128, 128)
+
+    def __call__(self, x):
+        x = x.astype(jnp.float32)
         for i, size in enumerate(self.hidden_sizes):
-            z = nn.Dense(features=size, name='hidden'+str(i+1), dtype=dtype)(x)
+            z = nn.Dense(features=size, name="hidden" + str(i + 1), dtype=dtype)(x)
             x = nn.relu(z)
-        logits = nn.Dense(features=self.num_outputs, name='logits')(x)
+        logits = nn.Dense(features=self.num_outputs, name="logits")(x)
         return logits
+
 
 def make_decision(key, params, obs):
     logits = policy_net.apply(params, obs).squeeze(axis=0)
@@ -80,12 +89,14 @@ def make_decision(key, params, obs):
     logp_a = distribution.log_prob(act)
     return act, logp_a
 
+
 @jax.jit
 def loss_fn(params, data_obs, data_acts, data_rets):
     logits = policy_net.apply(params, data_obs)
     distributions = Categorical(logits=logits)
     logpas = distributions.log_prob(data_acts.squeeze())  # squeeze actions data
     return -(logpas * data_rets.squeeze()).mean()  # squeeze returns data
+
 
 @jax.jit
 def train_epoch(params, opt_state, data):
@@ -95,9 +106,10 @@ def train_epoch(params, opt_state, data):
     params = optax.apply_updates(params, updates)
     return params, loss_val, opt_state
 
+
 # SETUP
 key = jax.random.PRNGKey(19)
-env = gym.make('CartPole-v1')
+env = gym.make("CartPole-v1")
 buf = OnPolicyReplayBuffer(
     capacity=500,
     obs_shape=env.observation_space.shape,
@@ -105,10 +117,7 @@ buf = OnPolicyReplayBuffer(
     num_act=env.action_space.n,
 )
 policy_net = MLP(env.action_space.n, (128, 128))
-params = policy_net.init(
-    key,
-    jnp.expand_dims(env.observation_space.sample(), axis=0)
-)
+params = policy_net.init(key, jnp.expand_dims(env.observation_space.sample(), axis=0))
 optimizer = optax.adam(3e-4)
 opt_state = optimizer.init(params)
 
@@ -137,7 +146,7 @@ for e in range(num_epochs):
             buf.finish_episode()
             deposit_return.append(ep_return)
             average_return.append(sum(deposit_return) / len(deposit_return))
-            print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+            print(f"episode: {ep + 1}, steps: {st + 1}, return: {ep_return}")
             ep += 1
             ep_return = 0
             pobs, _ = env.reset()
@@ -145,13 +154,13 @@ for e in range(num_epochs):
     rep = buf.extract()
     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
-    print(f"\n---epoch {e+1} loss: {loss_val}---\n")
+    print(f"\n---epoch {e + 1} loss: {loss_val}---\n")
 env.close()
 plt.plot(average_return)
 plt.show()
 
 # VALIDATION
-env = gym.make('CartPole-v1', render_mode='human')
+env = gym.make("CartPole-v1", render_mode="human")
 pobs, _ = env.reset()
 term, trunc = False, False
 for _ in range(500):
@@ -168,4 +177,3 @@ for _ in range(500):
         print(f"\n---return: {ep_return}---\n")
         break
 env.close()
-
