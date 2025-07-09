@@ -5,7 +5,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 import optax
-from distrax import Categorical
+
+# from distrax import Categorical
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
@@ -65,21 +66,16 @@ class OnPolicyReplayBuffer(object):
 class MultiLayerPerceptron(nnx.Module):
     """A simple fully-connected Neural Network model"""
 
-    def __init__(self, *, rng: nnx.Rngs):
-        self.linear1 = nnx.Linear(4, 128)
-        self.linear2 = nnx.Linear(128, 128)
-        self.linear3 = nnx.Linear(128, 2)
-
-    num_outputs: int
-    hidden_sizes: tuple = (128, 128)
+    def __init__(self, *, rngs: nnx.Rngs):
+        self.linear1 = nnx.Linear(4, 128, rngs=rngs)
+        self.linear2 = nnx.Linear(128, 128, rngs=rngs)
+        self.linear3 = nnx.Linear(128, 2, rngs=rngs)
 
     def __call__(self, x):
-        x = x.astype(jnp.float32)
-        for i, size in enumerate(self.hidden_sizes):
-            z = nn.Dense(features=size, name="hidden" + str(i + 1), dtype=dtype)(x)
-            x = nn.relu(z)
-        logits = nn.Dense(features=self.num_outputs, name="logits")(x)
-        return logits
+        x = nnx.relu(self.linear1(x))  # 1st layer
+        x = nnx.relu(self.linear2(x))  # 1st layer
+        y = self.linear3(x)  # 1st layer
+        return y
 
 
 def make_decision(key, params, obs):
@@ -108,72 +104,72 @@ def train_epoch(params, opt_state, data):
 
 
 # SETUP
-key = jax.random.PRNGKey(19)
-env = gym.make("CartPole-v1")
-buf = OnPolicyReplayBuffer(
-    capacity=500,
-    obs_shape=env.observation_space.shape,
-    act_shape=env.action_space.shape,
-    num_act=env.action_space.n,
-)
-policy_net = MLP(env.action_space.n, (128, 128))
-params = policy_net.init(key, jnp.expand_dims(env.observation_space.sample(), axis=0))
-optimizer = optax.adam(3e-4)
-opt_state = optimizer.init(params)
-
-
-# LOOP
-num_epochs = 100
-ep, ep_return = 0, 0
-deposit_return, average_return = [], []
-pobs, _ = env.reset()
-key, subkey = jax.random.split(key)
-for e in range(num_epochs):
-    for st in range(buf.capacity):
-        key, subkey = jax.random.split(key)
-        act, logp = make_decision(
-            subkey,
-            params,
-            jnp.expand_dims(pobs, axis=0),
-        )
-        # print(act, logp_a)
-        # act = env.action_space.sample()
-        nobs, rew, term, trunc, _ = env.step(int(act))
-        buf.store(pobs, act, rew)
-        ep_return += rew
-        pobs = nobs
-        if term or trunc:
-            buf.finish_episode()
-            deposit_return.append(ep_return)
-            average_return.append(sum(deposit_return) / len(deposit_return))
-            print(f"episode: {ep + 1}, steps: {st + 1}, return: {ep_return}")
-            ep += 1
-            ep_return = 0
-            pobs, _ = env.reset()
-    buf.finish_episode()
-    rep = buf.extract()
-    # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
-    params, loss_val, opt_state = train_epoch(params, opt_state, rep)
-    print(f"\n---epoch {e + 1} loss: {loss_val}---\n")
-env.close()
-plt.plot(average_return)
-plt.show()
-
-# VALIDATION
-env = gym.make("CartPole-v1", render_mode="human")
-pobs, _ = env.reset()
-term, trunc = False, False
-for _ in range(500):
-    key, subkey = jax.random.split(key)
-    act, qvals = make_decision(
-        subkey,
-        params,
-        jnp.expand_dims(pobs, axis=0),
-    )
-    nobs, rew, term, trunc, _ = env.step(int(act))
-    ep_return += rew
-    pobs = nobs
-    if term or trunc:
-        print(f"\n---return: {ep_return}---\n")
-        break
-env.close()
+# key = jax.random.PRNGKey(19)
+env = gym.make("CartPole-v1", render_mode="rgb_array")
+# buf = OnPolicyReplayBuffer(
+#     capacity=500,
+#     obs_shape=env.observation_space.shape,
+#     act_shape=env.action_space.shape,
+#     num_act=env.action_space.n,
+# )
+actor = MultiLayerPerceptron(rngs=nnx.Rngs(0))
+# params = policy_net.init(key, jnp.expand_dims(env.observation_space.sample(), axis=0))
+# optimizer = optax.adam(3e-4)
+# opt_state = optimizer.init(params)
+#
+#
+# # LOOP
+# num_epochs = 100
+# ep, ep_return = 0, 0
+# deposit_return, average_return = [], []
+# pobs, _ = env.reset()
+# key, subkey = jax.random.split(key)
+# for e in range(num_epochs):
+#     for st in range(buf.capacity):
+#         key, subkey = jax.random.split(key)
+#         act, logp = make_decision(
+#             subkey,
+#             params,
+#             jnp.expand_dims(pobs, axis=0),
+#         )
+#         # print(act, logp_a)
+#         # act = env.action_space.sample()
+#         nobs, rew, term, trunc, _ = env.step(int(act))
+#         buf.store(pobs, act, rew)
+#         ep_return += rew
+#         pobs = nobs
+#         if term or trunc:
+#             buf.finish_episode()
+#             deposit_return.append(ep_return)
+#             average_return.append(sum(deposit_return) / len(deposit_return))
+#             print(f"episode: {ep + 1}, steps: {st + 1}, return: {ep_return}")
+#             ep += 1
+#             ep_return = 0
+#             pobs, _ = env.reset()
+#     buf.finish_episode()
+#     rep = buf.extract()
+#     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+#     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
+#     print(f"\n---epoch {e + 1} loss: {loss_val}---\n")
+# env.close()
+# plt.plot(average_return)
+# plt.show()
+#
+# # VALIDATION
+# env = gym.make("CartPole-v1", render_mode="human")
+# pobs, _ = env.reset()
+# term, trunc = False, False
+# for _ in range(500):
+#     key, subkey = jax.random.split(key)
+#     act, qvals = make_decision(
+#         subkey,
+#         params,
+#         jnp.expand_dims(pobs, axis=0),
+#     )
+#     nobs, rew, term, trunc, _ = env.step(int(act))
+#     ep_return += rew
+#     pobs = nobs
+#     if term or trunc:
+#         print(f"\n---return: {ep_return}---\n")
+#         break
+# env.close()
