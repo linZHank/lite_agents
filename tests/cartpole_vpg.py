@@ -6,12 +6,12 @@ import jax.numpy as jnp
 from flax import nnx
 import optax
 
-# from distrax import Categorical
+from tensorflow_probability.substrates import jax as tfp
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
 
-Replay = namedtuple("Replay", ["obs", "act", "ret"])
+ReplayBuffer = namedtuple("ReplayBuffer", "obs act ret")
 
 
 class OnPolicyReplayBuffer(object):
@@ -63,7 +63,7 @@ class OnPolicyReplayBuffer(object):
         return replay
 
 
-class MultiLayerPerceptron(nnx.Module):
+class PolicyNet(nnx.Module):
     """A simple fully-connected Neural Network model"""
 
     def __init__(self, *, rngs: nnx.Rngs):
@@ -78,10 +78,10 @@ class MultiLayerPerceptron(nnx.Module):
         return y
 
 
-def make_decision(key, params, obs):
-    logits = policy_net.apply(params, obs).squeeze(axis=0)
-    distribution = Categorical(logits=logits)
-    act = distribution.sample(seed=key)
+def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray, act: np.int32):
+    logits = nnx.log_softmax(model(obs))
+    distribution = tfp.distributions.Categorical(logits=logits)
+    act = distribution.sample(seed=rngs)
     logp_a = distribution.log_prob(act)
     return act, logp_a
 
@@ -112,26 +112,26 @@ env = gym.make("CartPole-v1", render_mode="rgb_array")
 #     act_shape=env.action_space.shape,
 #     num_act=env.action_space.n,
 # )
-actor = MultiLayerPerceptron(rngs=nnx.Rngs(0))
+actor = PolicyNet(rngs=nnx.Rngs(0))
 # params = policy_net.init(key, jnp.expand_dims(env.observation_space.sample(), axis=0))
-# optimizer = optax.adam(3e-4)
+optimizer = nnx.Optimizer(actor, optax.adamw(3e-4, 0.9))
 # opt_state = optimizer.init(params)
 #
 #
-# # LOOP
-# num_epochs = 100
-# ep, ep_return = 0, 0
-# deposit_return, average_return = [], []
-# pobs, _ = env.reset()
+# LOOP
+num_epochs = 100
+ep, ep_return = 0, 0
+deposit_return, average_return = [], []
+prev_obs, _ = env.reset()
 # key, subkey = jax.random.split(key)
-# for e in range(num_epochs):
-#     for st in range(buf.capacity):
-#         key, subkey = jax.random.split(key)
-#         act, logp = make_decision(
-#             subkey,
-#             params,
-#             jnp.expand_dims(pobs, axis=0),
-#         )
+for e in range(num_epochs):
+    for st in range(buf.capacity):
+        key, subkey = jax.random.split(key)
+        act, logp = make_decision(
+            subkey,
+            params,
+            jnp.expand_dims(pobs, axis=0),
+        )
 #         # print(act, logp_a)
 #         # act = env.action_space.sample()
 #         nobs, rew, term, trunc, _ = env.step(int(act))
