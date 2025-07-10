@@ -11,56 +11,56 @@ import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
 
-ReplayBuffer = namedtuple("ReplayBuffer", "obs act ret")
+# ReplayBuffer = namedtuple("ReplayBuffer", "obs act ret")
 
 
-class OnPolicyReplayBuffer(object):
-    """A simple on-policy replay buffer."""
-
-    def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
-        # Variables
-        self.id = 0  # buffer instance index
-        self.ep_init_id = 0  # episode initial index
-        # Properties
-        self.capacity = capacity
-        self.obs_shape = obs_shape
-        self.act_shape = act_shape
-        self.num_act = num_act
-        # Replay storages
-        self.buf_obs = np.zeros(shape=[capacity] + list(obs_shape), dtype=np.float32)
-        self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
-        self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
-        self.buf_rets = np.zeros_like(self.buf_rews)
-
-    def store(self, observation, action, reward):
-        assert self.id < self.capacity
-        self.buf_obs[self.id] = observation
-        self.buf_acts[self.id] = action
-        self.buf_rews[self.id] = reward
-        self.id += 1
-
-    def finish_episode(self, discount=0.9):
-        """End of episode process
-        Call this at the end of a trajectory, to compute the rewards-to-go.
-        """
-        # print(f"episode srart index: {self.ep_init_id}")
-        ep_slice = slice(self.ep_init_id, self.id)
-        self.buf_rets[ep_slice] = lfilter(
-            [1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0
-        )[::-1]  # rewards to go
-        self.ep_init_id = self.id
-        # print(f"current index: {self.id}")
-
-    def extract(self):
-        """Get replay experience"""
-        replay = Replay(
-            self.buf_obs,
-            self.buf_acts,
-            self.buf_rets,
-        )
-        # clean up replay buffer for next epoch
-        self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
-        return replay
+# class OnPolicyReplayBuffer(object):
+#     """A simple on-policy replay buffer."""
+#
+#     def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
+#         # Variables
+#         self.id = 0  # buffer instance index
+#         self.ep_init_id = 0  # episode initial index
+#         # Properties
+#         self.capacity = capacity
+#         self.obs_shape = obs_shape
+#         self.act_shape = act_shape
+#         self.num_act = num_act
+#         # Replay storages
+#         self.buf_obs = np.zeros(shape=[capacity] + list(obs_shape), dtype=np.float32)
+#         self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
+#         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
+#         self.buf_rets = np.zeros_like(self.buf_rews)
+#
+#     def store(self, observation, action, reward):
+#         assert self.id < self.capacity
+#         self.buf_obs[self.id] = observation
+#         self.buf_acts[self.id] = action
+#         self.buf_rews[self.id] = reward
+#         self.id += 1
+#
+#     def finish_episode(self, discount=0.9):
+#         """End of episode process
+#         Call this at the end of a trajectory, to compute the rewards-to-go.
+#         """
+#         # print(f"episode srart index: {self.ep_init_id}")
+#         ep_slice = slice(self.ep_init_id, self.id)
+#         self.buf_rets[ep_slice] = lfilter(
+#             [1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0
+#         )[::-1]  # rewards to go
+#         self.ep_init_id = self.id
+#         # print(f"current index: {self.id}")
+#
+#     def extract(self):
+#         """Get replay experience"""
+#         replay = Replay(
+#             self.buf_obs,
+#             self.buf_acts,
+#             self.buf_rets,
+#         )
+#         # clean up replay buffer for next epoch
+#         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
+#         return replay
 
 
 class PolicyNet(nnx.Module):
@@ -86,27 +86,29 @@ def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray):
     return act, logp_a
 
 
-@jax.jit
-def loss_fn(params, data_obs, data_acts, data_rets):
-    logits = policy_net.apply(params, data_obs)
-    distributions = Categorical(logits=logits)
-    logpas = distributions.log_prob(data_acts.squeeze())  # squeeze actions data
-    return -(logpas * data_rets.squeeze()).mean()  # squeeze returns data
+# @jax.jit
+# def loss_fn(params, data_obs, data_acts, data_rets):
+#     logits = policy_net.apply(params, data_obs)
+#     distributions = Categorical(logits=logits)
+#     logpas = distributions.log_prob(data_acts.squeeze())  # squeeze actions data
+#     return -(logpas * data_rets.squeeze()).mean()  # squeeze returns data
 
 
-@jax.jit
-def train_epoch(params, opt_state, data):
-    loss_grad_fn = jax.value_and_grad(loss_fn)
-    loss_val, grads = loss_grad_fn(params, data.obs, data.act, data.ret)
-    updates, opt_state = optimizer.update(grads, opt_state)
-    params = optax.apply_updates(params, updates)
-    return params, loss_val, opt_state
+# @jax.jit
+# def train_epoch(params, opt_state, data):
+#     loss_grad_fn = jax.value_and_grad(loss_fn)
+#     loss_val, grads = loss_grad_fn(params, data.obs, data.act, data.ret)
+#     updates, opt_state = optimizer.update(grads, opt_state)
+#     params = optax.apply_updates(params, updates)
+#     return params, loss_val, opt_state
 
 
 # SETUP
 # key = jax.random.PRNGKey(19)
 env = gym.make("CartPole-v1", render_mode="rgb_array")
 max_episode_steps = env.spec.max_episode_steps
+ReplayBuffer = namedtuple("ReplayBuffer", "observations actions rewards")
+buffer = ReplayBuffer([], [], [])
 # buf = OnPolicyReplayBuffer(
 #     capacity=500,
 #     obs_shape=env.observation_space.shape,
