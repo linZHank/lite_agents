@@ -78,7 +78,7 @@ class PolicyNet(nnx.Module):
         return y
 
 
-def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray, act: np.int32):
+def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray):
     logits = nnx.log_softmax(model(obs))
     distribution = tfp.distributions.Categorical(logits=logits)
     act = distribution.sample(seed=rngs)
@@ -106,6 +106,7 @@ def train_epoch(params, opt_state, data):
 # SETUP
 # key = jax.random.PRNGKey(19)
 env = gym.make("CartPole-v1", render_mode="rgb_array")
+max_episode_steps = env.spec.max_episode_steps
 # buf = OnPolicyReplayBuffer(
 #     capacity=500,
 #     obs_shape=env.observation_space.shape,
@@ -119,38 +120,50 @@ optimizer = nnx.Optimizer(actor, optax.adamw(3e-4, 0.9))
 #
 #
 # LOOP
-num_epochs = 100
-ep, ep_return = 0, 0
+num_epochs = 1
+eps, eps_return = 0, 0.0
 deposit_return, average_return = [], []
 prev_obs, _ = env.reset()
+rngs = nnx.Rngs(19)
 # key, subkey = jax.random.split(key)
 for e in range(num_epochs):
-    for st in range(buf.capacity):
-        key, subkey = jax.random.split(key)
-        act, logp = make_decision(
-            subkey,
-            params,
-            jnp.expand_dims(pobs, axis=0),
-        )
-#         # print(act, logp_a)
-#         # act = env.action_space.sample()
-#         nobs, rew, term, trunc, _ = env.step(int(act))
-#         buf.store(pobs, act, rew)
-#         ep_return += rew
-#         pobs = nobs
-#         if term or trunc:
-#             buf.finish_episode()
-#             deposit_return.append(ep_return)
-#             average_return.append(sum(deposit_return) / len(deposit_return))
-#             print(f"episode: {ep + 1}, steps: {st + 1}, return: {ep_return}")
-#             ep += 1
-#             ep_return = 0
-#             pobs, _ = env.reset()
-#     buf.finish_episode()
-#     rep = buf.extract()
-#     # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
-#     params, loss_val, opt_state = train_epoch(params, opt_state, rep)
-#     print(f"\n---epoch {e + 1} loss: {loss_val}---\n")
+    for st in range(5000 + max_episode_steps):
+        # key, subkey = jax.random.split(key)
+        act, logp = make_decision(actor, rngs, prev_obs)
+        # print(act, logp)
+        # act = env.action_space.sample()
+        next_obs, rew, term, trunc, info = env.step(int(act))
+        # print("\n")
+        # print(f"previous observation: {prev_obs}")
+        # print(f"action: {act}")
+        # print(f"next observation: {next_obs}")
+        # print(f"reward: {rew}")
+        # print(f"episode terminated: {term}")
+        # print(f"episode truncated: {trunc}")
+        # print(f"info: {info}")
+        # print("\n")
+        #     buf.store(pobs, act, rew)
+        eps_return += rew
+        prev_obs = next_obs
+        if term or trunc:
+            # buf.finish_episode()
+            deposit_return.append(eps_return)
+            average_return.append(sum(deposit_return) / len(deposit_return))
+            print(
+                f"\n---\nepisode: {eps + 1}, steps: {st + 1}, return: {eps_return}\n---\n"
+            )
+            eps += 1
+            eps_return = 0
+            prev_obs, _ = env.reset()
+            if st > 5000:
+                break
+    # buf.finish_episode()
+    # rep = buf.extract()
+    # # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
+    # params, loss_val, opt_state = train_epoch(params, opt_state, rep)
+    print(
+        f"\n===\nepoch {e + 1} \n\ttotal steps: {st + 1}\n\taveraged return: {average_return[-1]}\n==="
+    )
 # env.close()
 # plt.plot(average_return)
 # plt.show()
