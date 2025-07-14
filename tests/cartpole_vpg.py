@@ -1,5 +1,6 @@
 import gymnasium as gym
 from collections import namedtuple
+from jax._src.dtypes import prng_key
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -11,56 +12,33 @@ import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
 
-# ReplayBuffer = namedtuple("ReplayBuffer", "obs act ret")
+ReplayBuffer = namedtuple(
+    "ReplayBuffer",
+    "observations actions rewards returns",
+    defaults=[[], [], [], []],
+)
+ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret")
 
 
-# class OnPolicyReplayBuffer(object):
-#     """A simple on-policy replay buffer."""
-#
-#     def __init__(self, capacity: int, obs_shape: tuple, act_shape: tuple, num_act=None):
-#         # Variables
-#         self.id = 0  # buffer instance index
-#         self.ep_init_id = 0  # episode initial index
-#         # Properties
-#         self.capacity = capacity
-#         self.obs_shape = obs_shape
-#         self.act_shape = act_shape
-#         self.num_act = num_act
-#         # Replay storages
-#         self.buf_obs = np.zeros(shape=[capacity] + list(obs_shape), dtype=np.float32)
-#         self.buf_acts = np.zeros(shape=(capacity, 1), dtype=int)
-#         self.buf_rews = np.zeros(shape=(capacity, 1), dtype=np.float32)
-#         self.buf_rets = np.zeros_like(self.buf_rews)
-#
-#     def store(self, observation, action, reward):
-#         assert self.id < self.capacity
-#         self.buf_obs[self.id] = observation
-#         self.buf_acts[self.id] = action
-#         self.buf_rews[self.id] = reward
-#         self.id += 1
-#
-#     def finish_episode(self, discount=0.9):
-#         """End of episode process
-#         Call this at the end of a trajectory, to compute the rewards-to-go.
-#         """
-#         # print(f"episode srart index: {self.ep_init_id}")
-#         ep_slice = slice(self.ep_init_id, self.id)
-#         self.buf_rets[ep_slice] = lfilter(
-#             [1], [1, -discount], self.buf_rews[ep_slice][::-1], axis=0
-#         )[::-1]  # rewards to go
-#         self.ep_init_id = self.id
-#         # print(f"current index: {self.id}")
-#
-#     def extract(self):
-#         """Get replay experience"""
-#         replay = Replay(
-#             self.buf_obs,
-#             self.buf_acts,
-#             self.buf_rets,
-#         )
-#         # clean up replay buffer for next epoch
-#         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.num_act)
-#         return replay
+class VPGBuffer(ReplayBuffer):
+    def store_step(self, obs, act, rew):
+        self.observations.append(obs)
+        self.actions.append(act)
+        self.rewards.append(rew)
+
+    def wrapup_episode(self, eps_return, len_episode):
+        self.returns.extend([eps_return] * len_episode)
+
+    def extract_experience(self):
+        observations_batch = jnp.array(self.observations)
+        actions_batch = jnp.array(self.actions)
+        returns_batch = jnp.array(self.returns)
+
+        experience_batch = ExperienceBatch(
+            observations_batch, actions_batch, returns_batch
+        )
+
+        return experience_batch
 
 
 class PolicyNet(nnx.Module):
@@ -87,59 +65,39 @@ def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray):
     return act, logp_a
 
 
-# @jax.jit
-# def loss_fn(params, data_obs, data_acts, data_rets):
-#     logits = policy_net.apply(params, data_obs)
-#     distributions = Categorical(logits=logits)
-#     logpas = distributions.log_prob(data_acts.squeeze())  # squeeze actions data
-#     return -(logpas * data_rets.squeeze()).mean()  # squeeze returns data
+@nnx.jit
+def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
+    logits = nnx.log_softmax(actor(experience_batch.obs))
+    distr = tfp.distributions.Categorical(logits=logits)
+    log_pi_a = distr.log_prob(experience_batch.act)
+    objective_value = experience_batch.ret * log_pi_a  # expected return
 
-
-# @jax.jit
-# def train_epoch(params, opt_state, data):
-#     loss_grad_fn = jax.value_and_grad(loss_fn)
-#     loss_val, grads = loss_grad_fn(params, data.obs, data.act, data.ret)
-#     updates, opt_state = optimizer.update(grads, opt_state)
-#     params = optax.apply_updates(params, updates)
-#     return params, loss_val, opt_state
+    return -objective_value.mean()
 
 
 # SETUP
-# key = jax.random.PRNGKey(19)
 env = gym.make("CartPole-v1", render_mode="rgb_array")
-max_episode_steps = env.spec.max_episode_steps
-ReplayBuffer = namedtuple("ReplayBuffer", "observations actions rewards")
-buffer = ReplayBuffer([], [], [])
-# buf = OnPolicyReplayBuffer(
-#     capacity=500,
-#     obs_shape=env.observation_space.shape,
-#     act_shape=env.action_space.shape,
-#     num_act=env.action_space.n,
-# )
-actor = PolicyNet(rngs=nnx.Rngs(0))
-# params = policy_net.init(key, jnp.expand_dims(env.observation_space.sample(), axis=0))
+last_obs, _ = env.reset()
+prng_keys = nnx.Rngs(19)
+buffer = VPGBuffer()
+actor = PolicyNet(rngs=prng_keys)
 optimizer = nnx.Optimizer(actor, optax.adamw(3e-4, 0.9))
-# opt_state = optimizer.init(params)
-#
-#
-# LOOP
-num_epochs = 1
-eps, eps_return = 0, 0.0
+max_epochs, num_episodes, num_steps = 1, 0, 0
+len_episode = 0
+episode_return = 0.0
 deposit_return, average_return = [], []
-prev_obs, _ = env.reset()
-rngs = nnx.Rngs(19)
-# key, subkey = jax.random.split(key)
-for e in range(num_epochs):
-    eps_len = 0
-    elapsed_steps = 0
-    for st in range(500 + max_episode_steps):
-        # key, subkey = jax.random.split(key)
-        act, logp = make_decision(actor, rngs, prev_obs)
+
+
+# LOOP
+for e in range(max_epochs):
+    for st in range(500 + env.spec.max_episode_steps):  # iterate epoch steps
+        act, logp = make_decision(actor, prng_keys, last_obs)
         # print(act, logp)
         # act = env.action_space.sample()
         next_obs, rew, term, trunc, info = env.step(np.array(act))
+        last_obs = next_obs
         # print("\n")
-        # print(f"previous observation: {prev_obs}")
+        # print(f"last observation: {last_obs}")
         # print(f"action: {act}")
         # print(f"next observation: {next_obs}")
         # print(f"reward: {rew}")
@@ -147,53 +105,30 @@ for e in range(num_epochs):
         # print(f"episode truncated: {trunc}")
         # print(f"info: {info}")
         # print("\n")
-        #     buf.store(pobs, act, rew)
-        buffer.observations.append(prev_obs)
-        buffer.actions.append(act)
-        buffer.rewards.append(rew)
-        eps_return += rew
-        prev_obs = next_obs
+        buffer.store_step(last_obs, act, rew)
+        # Step statistics
+        episode_return += rew
+        num_steps += 1
+        len_episode += 1
         if term or trunc:
-            eps_len = st + 1 - elapsed_steps
-            elapsed_steps = st + 1
-            # buffer.returns.append([eps_return] * eps_len)
-            # buf.finish_episode()
-            deposit_return.append(eps_return)
+            buffer.wrapup_episode(episode_return, len_episode)
+            # Episode statistics
+            num_episodes += 1
+            deposit_return.append(episode_return)
             average_return.append(sum(deposit_return) / len(deposit_return))
             print(
-                f"\n---\nepisode: {eps + 1}, length: {eps_len}, return: {eps_return}\n---\n"
+                f"\n---\nepisode: {num_episodes}, length: {len_episode}, return: {episode_return}\n---\n"
             )
-            eps += 1
-            eps_return = 0
-            prev_obs, _ = env.reset()
-            if st > 5000:
+            # Reset episode
+            len_episode, episode_return = 0, 0
+            last_obs, _ = env.reset()
+            if st > 500:  # let epoch end at a finished episode
                 break
-    # buf.finish_episode()
-    # rep = buf.extract()
-    # # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
-    # params, loss_val, opt_state = train_epoch(params, opt_state, rep)
+    # Update actor
+    experience_batch = buffer.extract_experience()
+    exp_ret = objective_fn(actor, experience_batch)
+    # TODO: update params
+    # Epoch statistics
     print(
-        f"\n===\nepoch {e + 1} \n\ttotal steps: {st + 1}\n\taveraged return: {average_return[-1]}\n==="
+        f"\n===\nepoch {e + 1} \n\ttotal steps: {num_steps}\n\taveraged return: {average_return[-1]}\n==="
     )
-# env.close()
-# plt.plot(average_return)
-# plt.show()
-#
-# # VALIDATION
-# env = gym.make("CartPole-v1", render_mode="human")
-# pobs, _ = env.reset()
-# term, trunc = False, False
-# for _ in range(500):
-#     key, subkey = jax.random.split(key)
-#     act, qvals = make_decision(
-#         subkey,
-#         params,
-#         jnp.expand_dims(pobs, axis=0),
-#     )
-#     nobs, rew, term, trunc, _ = env.step(int(act))
-#     ep_return += rew
-#     pobs = nobs
-#     if term or trunc:
-#         print(f"\n---return: {ep_return}---\n")
-#         break
-# env.close()
