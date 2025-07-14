@@ -78,6 +78,7 @@ class PolicyNet(nnx.Module):
         return y
 
 
+@nnx.jit
 def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray):
     logits = nnx.log_softmax(model(obs))
     distribution = tfp.distributions.Categorical(logits=logits)
@@ -129,12 +130,14 @@ prev_obs, _ = env.reset()
 rngs = nnx.Rngs(19)
 # key, subkey = jax.random.split(key)
 for e in range(num_epochs):
-    for st in range(5000 + max_episode_steps):
+    eps_len = 0
+    elapsed_steps = 0
+    for st in range(500 + max_episode_steps):
         # key, subkey = jax.random.split(key)
         act, logp = make_decision(actor, rngs, prev_obs)
         # print(act, logp)
         # act = env.action_space.sample()
-        next_obs, rew, term, trunc, info = env.step(int(act))
+        next_obs, rew, term, trunc, info = env.step(np.array(act))
         # print("\n")
         # print(f"previous observation: {prev_obs}")
         # print(f"action: {act}")
@@ -145,14 +148,20 @@ for e in range(num_epochs):
         # print(f"info: {info}")
         # print("\n")
         #     buf.store(pobs, act, rew)
+        buffer.observations.append(prev_obs)
+        buffer.actions.append(act)
+        buffer.rewards.append(rew)
         eps_return += rew
         prev_obs = next_obs
         if term or trunc:
+            eps_len = st + 1 - elapsed_steps
+            elapsed_steps = st + 1
+            # buffer.returns.append([eps_return] * eps_len)
             # buf.finish_episode()
             deposit_return.append(eps_return)
             average_return.append(sum(deposit_return) / len(deposit_return))
             print(
-                f"\n---\nepisode: {eps + 1}, steps: {st + 1}, return: {eps_return}\n---\n"
+                f"\n---\nepisode: {eps + 1}, length: {eps_len}, return: {eps_return}\n---\n"
             )
             eps += 1
             eps_return = 0
