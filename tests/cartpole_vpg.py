@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 import optax
+import orbax.checkpoint as ocp
 
 from tensorflow_probability.substrates import jax as tfp
 import matplotlib.pyplot as plt
@@ -84,7 +85,7 @@ last_obs, _ = env.reset()
 prng_keys = nnx.Rngs(29)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
-optimizer = nnx.Optimizer(actor, optax.adam(3e-4))
+optimizer = nnx.Optimizer(actor, optax.adamw(3e-4, 0.9))
 max_epochs = 100
 num_episodes, num_steps = 0, 0
 len_episode = 0
@@ -137,6 +138,7 @@ for e in range(max_epochs):
     # exp_ret = objective_fn(actor, experience_batch)
     update_params(actor, optimizer, experience_batch)
     buffer = VPGBuffer([], [], [], [])
+    # TODO: reset buffer as a method in VPGBuffer
 
 # VALIDATION
 env = gym.make("CartPole-v1", render_mode="human")
