@@ -1,6 +1,5 @@
 import gymnasium as gym
 from collections import namedtuple
-from jax._src.dtypes import prng_key
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -13,7 +12,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
 
-ReplayBuffer = namedtuple("ReplayBuffer", "observations actions rewards returns")
+ReplayBuffer = namedtuple("ReplayBuffer", "observations actions rewards step_returns")
 ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret")
 
 
@@ -23,13 +22,16 @@ class VPGBuffer(ReplayBuffer):
         self.actions.append(act)
         self.rewards.append(rew)
 
-    def wrapup_episode(self, eps_return, len_episode):
-        self.returns.extend([eps_return] * len_episode)
+    def wrapup_episode(self, len_episode, discount=0.98):
+        # self.step_returns.extend([sum(self.rewards[-len_episode:])] * len_episode)
+        rev_ep_rews = self.rewards[-len_episode:][::-1]  # reversed episodic rewards
+        drtg = lfilter([1], [1, -discount], rev_ep_rews)[::-1]  # discounted return togo
+        self.step_returns.extend(drtg.tolist())
 
     def extract_experience(self):
         observations_batch = jnp.array(self.observations)
         actions_batch = jnp.array(self.actions)
-        returns_batch = jnp.array(self.returns)
+        returns_batch = jnp.array(self.step_returns)
 
         experience_batch = ExperienceBatch(
             observations_batch, actions_batch, returns_batch
@@ -86,7 +88,7 @@ prng_keys = nnx.Rngs(29)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
 optimizer = nnx.Optimizer(actor, optax.adamw(3e-4, 0.9))
-max_epochs = 100
+max_epochs = 50
 num_episodes, num_steps = 0, 0
 len_episode = 0
 episode_return = 0.0
@@ -116,7 +118,7 @@ for e in range(max_epochs):
         len_episode += 1
         last_obs = next_obs
         if term or trunc:
-            buffer.wrapup_episode(episode_return, len_episode)
+            buffer.wrapup_episode(len_episode)
             # Episode statistics
             num_episodes += 1
             deposit_return.append(episode_return)
@@ -138,9 +140,9 @@ for e in range(max_epochs):
     # exp_ret = objective_fn(actor, experience_batch)
     update_params(actor, optimizer, experience_batch)
     buffer = VPGBuffer([], [], [], [])
-    # TODO: reset buffer as a method in VPGBuffer
 
 # VALIDATION
+input("Press any key to evaluate agent")
 env = gym.make("CartPole-v1", render_mode="human")
 last_obs, _ = env.reset()
 episode_return = 0.0
