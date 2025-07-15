@@ -356,6 +356,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "flax" },
+    { name = "orbax-checkpoint" },
     { name = "tensorflow-probability" },
 ]
 
@@ -375,6 +376,7 @@ gpu = [
 [package.metadata]
 requires-dist = [
     { name = "flax", specifier = ">=0.10.7" },
+    { name = "orbax-checkpoint", specifier = ">=0.11.19" },
     { name = "tensorflow-probability", specifier = ">=0.25.0" },
 ]
 
