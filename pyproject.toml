@@ -23,6 +23,7 @@ cpu = [
 dev = [
     "gymnasium>=1.2.0",
     "matplotlib>=3.10.3",
+    "pygame>=2.6.1",
 ]
 gpu = [
     "jax[cuda12]>=0.6.2",
