@@ -146,7 +146,7 @@ plt.plot(average_return)
 plt.ylim(0, 200)
 plt.yticks(np.arange(10) * 20)
 plt.grid(visible=True, axis="y")
-plt.savefig("vpg.png")
+plt.savefig("/tmp/lite_agents_results/vpg.png")
 
 
 # VALIDATION
