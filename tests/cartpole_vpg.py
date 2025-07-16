@@ -88,7 +88,7 @@ prng_keys = nnx.Rngs(29)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
 optimizer = nnx.Optimizer(actor, optax.adamw(3e-4, 0.9))
-max_epochs = 50
+max_epochs = 256
 num_episodes, num_steps = 0, 0
 len_episode = 0
 episode_return = 0.0
@@ -140,6 +140,14 @@ for e in range(max_epochs):
     # exp_ret = objective_fn(actor, experience_batch)
     update_params(actor, optimizer, experience_batch)
     buffer = VPGBuffer([], [], [], [])
+
+
+plt.plot(average_return)
+plt.ylim(0, 200)
+plt.yticks(np.arange(10) * 20)
+plt.grid(visible=True, axis="y")
+plt.savefig("vpg.png")
+
 
 # VALIDATION
 input("Press any key to evaluate agent")
