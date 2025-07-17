@@ -155,16 +155,16 @@ plt.savefig(Path(__file__).parent.joinpath("vpg.png"))
 
 
 # VALIDATION
-# input("Press any key to evaluate agent")
-# env = gym.make("Pendulum-v1", render_mode="human")
-# last_obs, _ = env.reset()
-# episode_return = 0.0
-# term, trunc = False, False
-# for _ in range(env.spec.max_episode_steps):
-#     act, _ = make_decision(actor, prng_keys, last_obs)
-#     next_obs, rew, term, trunc, _ = env.step(np.array(act))
-#     episode_return += rew
-#     last_obs = next_obs
-#     if term or trunc:
-#         print(f"\n---return: {episode_return}---\n")
-#         break
+input("Press any key to evaluate agent")
+env = gym.make("Pendulum-v1", render_mode="human")
+last_obs, _ = env.reset()
+episode_return = 0.0
+term, trunc = False, False
+for _ in range(env.spec.max_episode_steps):
+    act, _ = make_decision(actor, prng_keys, last_obs)
+    next_obs, rew, term, trunc, _ = env.step(np.array(act))
+    episode_return += rew
+    last_obs = next_obs
+    if term or trunc:
+        print(f"\n---return: {episode_return}---\n")
+        break
