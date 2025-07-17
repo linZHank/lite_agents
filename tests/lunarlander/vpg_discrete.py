@@ -99,7 +99,7 @@ deposit_return, average_return = [], []
 
 # LOOP
 for e in range(max_epochs):
-    for st in range(10000 + env.spec.max_episode_steps):  # iterate epoch steps
+    for st in range(11 * env.spec.max_episode_steps):  # at least 10 finished episodes
         # act = env.action_space.sample()
         act, logp = make_decision(actor, prng_keys, last_obs)
         # print(act, logp)
@@ -131,7 +131,7 @@ for e in range(max_epochs):
             # Reset episode
             len_episode, episode_return = 0, 0
             last_obs, _ = env.reset()
-            if st > 10000:  # let epoch end at a finished episode
+            if st > 10 * env.spec.max_episode_steps:  # finish last episode
                 break
     # Epoch statistics
     print(
@@ -148,7 +148,7 @@ plt.plot(average_return)
 # plt.ylim(-500, -100)
 # plt.yticks(np.arange(-500, -100, 50))
 plt.grid(visible=True)
-plt.savefig(Path(__file__).parent.joinpath("vpg.png"))
+plt.savefig(Path(__file__).parent.joinpath("vpg_discrete.png"))
 
 
 # VALIDATION
