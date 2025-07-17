@@ -54,23 +54,23 @@ class PolicyNet(nnx.Module):
         x = nnx.relu(self.linear1(x))  # 1st layer
         x = nnx.relu(self.linear2(x))  # 2nd layer
         mu = self.linear3(x)  # mean
-        sigma = nnx.relu(self.linear3(x))  # std has to be positive
-        return mu, sigma
+        log_sigma = self.linear3(x)
+        return mu, log_sigma
 
 
 @nnx.jit
-def make_decision(actor: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray):
-    mu, sigma = actor(obs)
-    distribution = tfp.distributions.Normal(loc=mu, scale=sigma + 1e-12)
-    act = distribution.sample(seed=rngs)
-    logp_a = distribution.log_prob(act)
-    return act, logp_a
+def make_decision(rngs: nnx.Rngs, model: PolicyNet, obs: np.ndarray):
+    mu, log_sigma = actor(obs)
+    distribution = tfp.distributions.Normal(loc=mu, scale=jnp.exp(log_sigma))
+    sampled_action = distribution.sample(seed=rngs)
+    # logpi_agvns = distribution.log_prob(sampled_action)
+    return sampled_action, mu, log_sigma
 
 
 @nnx.jit
 def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
-    mu_batch, sigma_batch = actor(experience_batch.obs)
-    distr_batch = tfp.distributions.Normal(loc=mu_batch, scale=sigma_batch + 1e-12)
+    mu_batch, log_sigma_batch = actor(experience_batch.obs)
+    distr_batch = tfp.distributions.Normal(loc=mu_batch, scale=jnp.exp(log_sigma_batch))
     log_pi_as = distr_batch.log_prob(experience_batch.act)
     objective_value = experience_batch.ret * log_pi_as  # expected return
 
@@ -87,11 +87,11 @@ def update_params(actor, optimizer, experience_batch):
 # SETUP
 env = gym.make("Pendulum-v1", render_mode="rgb_array")
 last_obs, _ = env.reset()
-prng_keys = nnx.Rngs(29)
+prng_keys = nnx.Rngs(19)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
-optimizer = nnx.Optimizer(actor, optax.adamw(1e-4, 0.9))
-max_epochs = 256
+optimizer = nnx.Optimizer(actor, optax.adamw(1e-4, 0.95))
+max_epochs = 512
 num_episodes, num_steps = 0, 0
 len_episode = 0
 episode_return = 0.0
@@ -100,9 +100,9 @@ deposit_return, average_return = [], []
 
 # LOOP
 for e in range(max_epochs):
-    for st in range(11 * env.spec.max_episode_steps):  # iterate epoch steps
+    for st in range(11 * env.spec.max_episode_steps):  # at least 10 finished episodes
         # act = env.action_space.sample()
-        act, logp = make_decision(actor, prng_keys, last_obs)
+        act, mean, log_stdd = make_decision(prng_keys, actor, last_obs)
         # print(act, logp)
         next_obs, rew, term, trunc, info = env.step(np.array(act))
         # Step statistics
@@ -132,9 +132,7 @@ for e in range(max_epochs):
             # Reset episode
             len_episode, episode_return = 0, 0
             last_obs, _ = env.reset()
-            if (
-                st > 10 * env.spec.max_episode_steps
-            ):  # let epoch end with a finished episode
+            if st > 10 * env.spec.max_episode_steps:  # finish last episode
                 break
     # Epoch statistics
     print(
@@ -161,8 +159,9 @@ last_obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
 for _ in range(env.spec.max_episode_steps):
-    act, _ = make_decision(actor, prng_keys, last_obs)
-    next_obs, rew, term, trunc, _ = env.step(np.array(act))
+    act_sample, mean, log_stdd = make_decision(prng_keys, actor, last_obs)
+    # next_obs, rew, term, trunc, _ = env.step(np.array(mean))
+    next_obs, rew, term, trunc, _ = env.step(np.array(act_sample))
     episode_return += rew
     last_obs = next_obs
     if term or trunc:
