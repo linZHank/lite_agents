@@ -58,22 +58,22 @@ class PolicyNet(nnx.Module):
 
 
 @nnx.jit
-def make_decision(model: PolicyNet, rngs: nnx.Rngs, obs: np.ndarray):
-    logits = nnx.log_softmax(model(obs))
-    distribution = tfp.distributions.Categorical(logits=logits)
-    act = distribution.sample(seed=rngs)
-    logp_a = distribution.log_prob(act)
-    return act, logp_a
+def make_decision(rngs: nnx.Rngs, model: PolicyNet, obs: np.ndarray):
+    log_probs = nnx.log_softmax(model(obs))  # policy: log(pi(a|s))
+    distribution = tfp.distributions.Categorical(logits=log_probs)
+    sampled_action = distribution.sample(seed=rngs)
+    # log_prob_as = distribution.log_prob(sampled_action)
+    return sampled_action, log_probs
 
 
 @nnx.jit
 def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
-    logits = nnx.log_softmax(actor(experience_batch.obs))
-    distr = tfp.distributions.Categorical(logits=logits)
-    log_pi_a = distr.log_prob(experience_batch.act)
-    objective_value = experience_batch.ret * log_pi_a  # expected return
+    log_prob_batch = nnx.log_softmax(actor(experience_batch.obs))
+    cat_distr_batch = tfp.distributions.Categorical(logits=log_prob_batch)
+    logpa_batch = cat_distr_batch.log_prob(experience_batch.act)
+    objective_batch = experience_batch.ret * logpa_batch  # NOT expected return
 
-    return -objective_value.mean()
+    return -objective_batch.mean()
 
 
 @nnx.jit
@@ -101,7 +101,7 @@ deposit_return, average_return = [], []
 for e in range(max_epochs):
     for st in range(11 * env.spec.max_episode_steps):  # at least 10 finished episodes
         # act = env.action_space.sample()
-        act, logp = make_decision(actor, prng_keys, last_obs)
+        act, _ = make_decision(prng_keys, actor, last_obs)
         # print(act, logp)
         next_obs, rew, term, trunc, info = env.step(np.array(act))
         # Step statistics
@@ -158,8 +158,9 @@ last_obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
 for _ in range(env.spec.max_episode_steps):
-    act, _ = make_decision(actor, prng_keys, last_obs)
-    next_obs, rew, term, trunc, _ = env.step(int(act))
+    act_sample, log_probs = make_decision(prng_keys, actor, last_obs)
+    # next_obs, rew, term, trunc, _ = env.step(np.array(log_probs.argmax()))
+    next_obs, rew, term, trunc, _ = env.step(np.array(act_sample))
     episode_return += rew
     last_obs = next_obs
     if term or trunc:
