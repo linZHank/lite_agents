@@ -1,4 +1,5 @@
 import gymnasium as gym
+import gym_explore
 from collections import namedtuple
 from pathlib import Path
 
@@ -46,52 +47,51 @@ class PolicyNet(nnx.Module):
     """A simple fully-connected Neural Network model"""
 
     def __init__(self, *, rngs: nnx.Rngs):
-        self.linear1 = nnx.Linear(3, 128, rngs=rngs)  # 3-dim o_space
+        self.linear1 = nnx.Linear(3, 128, rngs=rngs)  # 3-dim obspace
         self.linear2 = nnx.Linear(128, 128, rngs=rngs)
-        self.linear3 = nnx.Linear(128, 1, rngs=rngs)  # 1-dim a_space
+        self.linear3 = nnx.Linear(128, 4, rngs=rngs)  # 4 discrete actions
 
     def __call__(self, x):
         x = nnx.relu(self.linear1(x))  # 1st layer
-        x = nnx.relu(self.linear2(x))  # 2nd layer
-        mu = self.linear3(x)  # mean
-        log_sigma = self.linear3(x)
-        return mu, log_sigma
+        x = nnx.relu(self.linear2(x))  # 1st layer
+        y = self.linear3(x)  # 1st layer
+        return y
 
 
 @nnx.jit
-def make_decision(rngs: nnx.Rngs, actor: PolicyNet, obs: np.ndarray):
-    mu, log_sigma = actor(obs)
-    distribution = tfp.distributions.Normal(loc=mu, scale=jnp.exp(log_sigma))
+def make_decision(rngs: nnx.Rngs, model: PolicyNet, obs: np.ndarray):
+    log_probs = nnx.log_softmax(model(obs))  # policy: log(pi(a|s))
+    distribution = tfp.distributions.Categorical(logits=log_probs)
     sampled_action = distribution.sample(seed=rngs)
-    # logpi_agvns = distribution.log_prob(sampled_action)
-    return sampled_action, mu, log_sigma
+    # log_prob_as = distribution.log_prob(sampled_action)
+    return sampled_action, log_probs
 
 
 @nnx.jit
 def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
-    mu_batch, log_sigma_batch = actor(experience_batch.obs)
-    distr_batch = tfp.distributions.Normal(loc=mu_batch, scale=jnp.exp(log_sigma_batch))
-    log_pi_as = distr_batch.log_prob(experience_batch.act)
-    objective_value = experience_batch.ret * log_pi_as  # expected return
+    log_prob_batch = nnx.log_softmax(actor(experience_batch.obs))
+    cat_distr_batch = tfp.distributions.Categorical(logits=log_prob_batch)
+    logpa_batch = cat_distr_batch.log_prob(experience_batch.act)
+    objective_batch = experience_batch.ret * logpa_batch  # NOT expected return
 
-    return -objective_value.mean()
+    return -objective_batch.mean()
 
 
 @nnx.jit
 def update_params(actor, optimizer, experience_batch):
     grad_fn = nnx.value_and_grad(objective_fn)
-    obj_val, grads = grad_fn(actor, experience_batch)
+    objective, grads = grad_fn(actor, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
 
 # SETUP
-env = gym.make("Pendulum-v1", render_mode="rgb_array")
+env = gym.make("Escaper-v0", render_mode=None)
 last_obs, _ = env.reset()
-prng_keys = nnx.Rngs(19)
+prng_keys = nnx.Rngs(25)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
-optimizer = nnx.Optimizer(actor, optax.adamw(1e-4, 0.95))
-max_epochs = 512
+optimizer = nnx.Optimizer(actor, optax.adamw(3e-4))
+max_epochs = 256
 num_episodes, num_steps = 0, 0
 len_episode = 0
 episode_return = 0.0
@@ -102,9 +102,9 @@ deposit_return, average_return = [], []
 for e in range(max_epochs):
     for st in range(11 * env.spec.max_episode_steps):  # at least 10 finished episodes
         # act = env.action_space.sample()
-        act, mean, log_stdd = make_decision(prng_keys, actor, last_obs)
+        act, _ = make_decision(prng_keys, actor, last_obs)
         # print(act, logp)
-        next_obs, rew, term, trunc, info = env.step(np.array(act))
+        next_obs, rew, term, trunc, info = env.step(int(act))
         # Step statistics
         # print("\n")
         # print(f"last observation: {last_obs}")
@@ -149,19 +149,19 @@ plt.plot(average_return)
 # plt.ylim(-500, -100)
 # plt.yticks(np.arange(-500, -100, 50))
 plt.grid(visible=True)
-plt.savefig(Path(__file__).parent.joinpath("vpg.png"))
+plt.savefig(Path(__file__).parent.joinpath("vpg_discrete.png"))
 
 
 # VALIDATION
 input("Press any key to evaluate agent")
-env = gym.make("Pendulum-v1", render_mode="human")
+env = gym.make("Escaper-v0", render_mode="human")
 last_obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
 for _ in range(env.spec.max_episode_steps):
-    act_sample, mean, log_stdd = make_decision(prng_keys, actor, last_obs)
-    # next_obs, rew, term, trunc, _ = env.step(np.array(mean))
-    next_obs, rew, term, trunc, _ = env.step(np.array(act_sample))
+    act_sample, log_probs = make_decision(prng_keys, actor, last_obs)
+    # next_obs, rew, term, trunc, _ = env.step(np.array(log_probs.argmax()))
+    next_obs, rew, term, trunc, _ = env.step(int(act_sample))
     episode_return += rew
     last_obs = next_obs
     if term or trunc:
