@@ -3,14 +3,12 @@ name = "lite-agents"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "linzhanguca", email = "lzhang12@uca.edu" }
-]
+authors = [{ name = "linzhanguca", email = "lzhang12@uca.edu" }]
 requires-python = ">=3.13"
 dependencies = [
-    "flax>=0.10.7",
-    "orbax-checkpoint>=0.11.19",
-    "tensorflow-probability>=0.25.0",
+  "flax>=0.10.7",
+  "orbax-checkpoint>=0.11.19",
+  "tensorflow-probability>=0.25.0",
 ]
 
 [build-system]
@@ -18,15 +16,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-cpu = [
-    "jax>=0.6.2",
-]
+cpu = ["jax>=0.6.2"]
 dev = [
-    "gymnasium[box2d]>=1.2.0",
-    "matplotlib>=3.10.3",
-    "pygame>=2.6.1",
-    "swig>=4.3.1",
+  "gym-explore",
+  "gymnasium[box2d]>=1.2.0",
+  "matplotlib>=3.10.3",
+  "pygame>=2.6.1",
+  "pyqt6>=6.9.1",
+  "swig>=4.3.1",
 ]
-gpu = [
-    "jax[cuda12]>=0.6.2",
-]
+gpu = ["jax[cuda12]>=0.6.2"]
+
+[tool.uv.sources]
+gym-explore = { path = "../gym-explore" }
