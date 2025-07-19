@@ -8,7 +8,8 @@ from distrax import Categorical, Normal
 from scipy.signal import lfilter
 
 
-Replay = namedtuple('Replay', ['obs', 'act', 'ret'])
+Replay = namedtuple("Replay", ["obs", "act", "ret"])
+
 
 class ReplayBuffer(object):
     """A simple on-policy replay buffer."""
@@ -23,11 +24,15 @@ class ReplayBuffer(object):
         self.act_shape = act_shape
         self.act_n = act_n
         # Replay storages
-        self.buf_obs = np.zeros(shape=[capacity]+list(self.obs_shape), dtype=np.float32)
+        self.buf_obs = np.zeros(
+            shape=[capacity] + list(self.obs_shape), dtype=np.float32
+        )
         if self.act_n:  # discrete action space
             self.buf_act = np.zeros(shape=(capacity, 1), dtype=np.float32)
         else:
-            self.buf_act = np.zeros(shape=[capacity]+list(self.act_shape), dtype=np.float32)
+            self.buf_act = np.zeros(
+                shape=[capacity] + list(self.act_shape), dtype=np.float32
+            )
         self.buf_rew = np.zeros(shape=(capacity, 1), dtype=np.float32)
         self.buf_ret = np.zeros_like(self.buf_rew)
 
@@ -39,27 +44,33 @@ class ReplayBuffer(object):
         self.loc += 1
 
     def finish_episode(self, discount=0.98):
-        """ End of episode process
+        """End of episode process
         Call this at the end of a trajectory, to compute the return-to-go.
         """
+
         def compute_rtgs(rewards):
-            return lfilter([1], [1, -discount], rewards[::-1], axis=0,)[::-1]
+            return lfilter(
+                [1],
+                [1, -discount],
+                rewards[::-1],
+                axis=0,
+            )[::-1]
 
         ep_slice = slice(self.ep_init_loc, self.loc)
         self.buf_ret[ep_slice] = compute_rtgs(self.buf_rew[ep_slice])
         self.ep_init_loc = self.loc
 
     def extract(self):
-        """Get all on-policy replay experience
-        """
+        """Get all on-policy replay experience"""
         replay = Replay(self.buf_obs, self.buf_act, self.buf_ret)
         # clean up replay buffer for next epoch
         self.__init__(self.capacity, self.obs_shape, self.act_shape, self.act_n)
         return replay
 
+
 class CategoricalPolicyNet(nn.Module):
-    """An MLP for discrete action space
-    """
+    """An MLP for discrete action space"""
+
     act_n: int
     hidden_sizes: tuple
 
@@ -67,14 +78,15 @@ class CategoricalPolicyNet(nn.Module):
     def __call__(self, obs: np.ndarray):
         x = obs.astype(jnp.float32)
         for i, size in enumerate(self.hidden_sizes):
-            z = nn.Dense(features=size, name='hidden'+str(i+1))(x)
+            z = nn.Dense(features=size, name="hidden" + str(i + 1))(x)
             x = nn.relu(z)
-        logits = nn.Dense(features=self.act_n, name='logits')(x)
+        logits = nn.Dense(features=self.act_n, name="logits")(x)
         return logits
 
+
 class GaussianPolicyNet(nn.Module):
-    """An MLP for continuous action space
-    """
+    """An MLP for continuous action space"""
+
     act_shape: int
     hidden_sizes: tuple = (64, 64)
 
@@ -82,16 +94,16 @@ class GaussianPolicyNet(nn.Module):
     def __call__(self, obs: np.ndarray):
         x = obs.astype(jnp.float32)
         for i, size in enumerate(self.hidden_sizes):
-            z = nn.Dense(features=size, name=f'hidden_{i+1}')(x)
+            z = nn.Dense(features=size, name=f"hidden_{i + 1}")(x)
             x = nn.relu(z)
-        logits_mean = nn.Dense(features=self.act_shape, name='mean')(x)
-        logits_lstd = nn.Dense(features=self.act_shape, name='log_std')(x)
+        logits_mean = nn.Dense(features=self.act_shape, name="mean")(x)
+        logits_lstd = nn.Dense(features=self.act_shape, name="log_std")(x)
         return logits_mean, logits_lstd
 
-class VPGAgent:
-    """On-Policy agent powered by REINFORCE (Vanilla Policy Gradient)
 
-    """
+class VPGAgent:
+    """On-Policy agent powered by REINFORCE (Vanilla Policy Gradient)"""
+
     def __init__(
         self,
         seed,
@@ -121,11 +133,9 @@ class VPGAgent:
         # self.normal_loss_fn = jax.jit(self.normal_loss_fn)
         self.train_epoch = jax.jit(self.train_epoch)
 
-
     def init_params(self):
         parameters = self.actor.init(
-            self.key,
-            jnp.expand_dims(jnp.ones(self.obs_shape), axis=0)
+            self.key, jnp.expand_dims(jnp.ones(self.obs_shape), axis=0)
         )
         return parameters
 
@@ -142,7 +152,7 @@ class VPGAgent:
             logits_mu, logits_logsigma = self.actor.apply(params, obs)
             logits_mu = logits_mu.squeeze(axis=0)
             logits_sigma = jnp.exp(logits_logsigma.squeeze(axis=0))
-            distribution = Normal(loc=logits_mu, scale=logits_sigma+1e-10)
+            distribution = Normal(loc=logits_mu, scale=logits_sigma + 1e-10)
         act = distribution.sample(seed=subkey)
         logprob_a = distribution.log_prob(act)
         return act, logprob_a
@@ -165,18 +175,18 @@ class VPGAgent:
         loss_val, grads = loss_grad_fn(params, replay)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         params = optax.apply_updates(params, updates)
-        return params, loss_val 
+        return params, loss_val
 
 
-
-if __name__=='__main__':
+if __name__ == "__main__":
     import gymnasium as gym
     import matplotlib.pyplot as plt
+
     # SETUP
     key = jax.random.PRNGKey(19)
     # env = gym.make('CartPole-v1')
     # env = gym.make('Pendulum-v1', g=9.81)
-    env = gym.make('LunarLander-v2', continuous=True)
+    env = gym.make("LunarLander-v2", continuous=True)
     buffer = ReplayBuffer(
         capacity=4096,
         obs_shape=env.observation_space.shape,
@@ -210,7 +220,7 @@ if __name__=='__main__':
                 buffer.finish_episode()
                 deposit_return.append(ep_return)
                 average_return.append(sum(deposit_return) / len(deposit_return))
-                print(f"episode: {ep+1}, steps: {st+1}, return: {ep_return}")
+                print(f"episode: {ep + 1}, steps: {st + 1}, return: {ep_return}")
                 ep += 1
                 ep_return = 0
                 pobs, _ = env.reset()
@@ -218,7 +228,7 @@ if __name__=='__main__':
         replay = buffer.extract()
         # loss_val = loss_fn(params, rep.obs, rep.act, rep.ret)
         params, loss_val = agent.train_epoch(params, replay)
-        print(f"\n---epoch {e+1} loss: {loss_val}---\n")
+        print(f"\n---epoch {e + 1} loss: {loss_val}---\n")
     env.close()
     plt.plot(average_return)
     plt.show()
@@ -226,7 +236,7 @@ if __name__=='__main__':
     # VALIDATION
     # env = gym.make('CartPole-v1', render_mode='human')
     # env = gym.make('Pendulum-v1', g=9.81, render_mode='human')
-    env = gym.make('LunarLander-v2', continuous=True, render_mode='human')
+    env = gym.make("LunarLander-v2", continuous=True, render_mode="human")
     pobs, _ = env.reset()
     term, trunc = False, False
     for _ in range(1000):
@@ -242,4 +252,3 @@ if __name__=='__main__':
             print(f"\n---return: {ep_return}---\n")
             break
     env.close()
-
