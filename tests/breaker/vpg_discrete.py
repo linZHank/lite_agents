@@ -1,5 +1,5 @@
 import gymnasium as gym
-import gym_explore
+import capsule2d
 from collections import namedtuple
 from pathlib import Path
 
@@ -47,9 +47,9 @@ class PolicyNet(nnx.Module):
     """A simple fully-connected Neural Network model"""
 
     def __init__(self, *, rngs: nnx.Rngs):
-        self.linear1 = nnx.Linear(3, 128, rngs=rngs)  # 3-dim obspace
-        self.linear2 = nnx.Linear(128, 128, rngs=rngs)
-        self.linear3 = nnx.Linear(128, 4, rngs=rngs)  # 4 discrete actions
+        self.linear1 = nnx.Linear(3, 32, rngs=rngs)  # 3-dim obspace
+        self.linear2 = nnx.Linear(32, 32, rngs=rngs)
+        self.linear3 = nnx.Linear(32, 4, rngs=rngs)  # 4 discrete actions
 
     def __call__(self, x):
         x = nnx.relu(self.linear1(x))  # 1st layer
@@ -85,8 +85,8 @@ def update_params(actor, optimizer, experience_batch):
 
 
 # SETUP
-env = gym.make("Escaper-v0", render_mode=None)
-last_obs, _ = env.reset()
+env = gym.make("CapsuleBreaker-v0", render_mode="rgb_array")
+last_obs, _ = env.reset(options="random")
 prng_keys = nnx.Rngs(25)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
@@ -131,7 +131,7 @@ for e in range(max_epochs):
             )
             # Reset episode
             len_episode, episode_return = 0, 0
-            last_obs, _ = env.reset()
+            last_obs, _ = env.reset(options="random")
             if st > 10 * env.spec.max_episode_steps:  # finish last episode
                 break
     # Epoch statistics
@@ -154,7 +154,7 @@ plt.savefig(Path(__file__).parent.joinpath("vpg_discrete.png"))
 
 # VALIDATION
 input("Press any key to evaluate agent")
-env = gym.make("Escaper-v0", render_mode="human")
+env = gym.make("CapsuleBreaker-v0", render_mode="human")
 last_obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
