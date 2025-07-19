@@ -91,7 +91,7 @@ prng_keys = nnx.Rngs(25)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
 optimizer = nnx.Optimizer(actor, optax.adamw(3e-4))
-max_epochs = 256
+max_epochs = 4096
 num_episodes, num_steps = 0, 0
 len_episode = 0
 episode_return = 0.0
