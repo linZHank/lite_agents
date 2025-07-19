@@ -18,7 +18,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 cpu = ["jax>=0.6.2"]
 dev = [
-  "gym-explore",
+  "capsule2d",
   "gymnasium[box2d]>=1.2.0",
   "matplotlib>=3.10.3",
   "pygame>=2.6.1",
@@ -28,4 +28,4 @@ dev = [
 gpu = ["jax[cuda12]>=0.6.2"]
 
 [tool.uv.sources]
-gym-explore = { path = "../gym-explore" }
+capsule2d = { path = "../Capsule2D" }
