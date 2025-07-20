@@ -91,7 +91,7 @@ prng_keys = nnx.Rngs(25)
 buffer = VPGBuffer([], [], [], [])
 actor = PolicyNet(rngs=prng_keys)
 optimizer = nnx.Optimizer(actor, optax.adamw(3e-4))
-max_epochs = 4096
+max_epochs = 256
 num_episodes, num_steps = 0, 0
 len_episode = 0
 episode_return = 0.0
@@ -105,21 +105,11 @@ for e in range(max_epochs):
         act, _ = make_decision(prng_keys, actor, last_obs)
         # print(act, logp)
         next_obs, rew, term, trunc, info = env.step(int(act))
-        # Step statistics
-        # print("\n")
-        # print(f"last observation: {last_obs}")
-        # print(f"action: {act}")
-        # print(f"next observation: {next_obs}")
-        # print(f"reward: {rew}")
-        # print(f"episode terminated: {term}")
-        # print(f"episode truncated: {trunc}")
-        # print(f"info: {info}")
-        # print("\n")
         buffer.store_step(last_obs, act, rew)
         episode_return += rew
         num_steps += 1
         len_episode += 1
-        last_obs = next_obs
+        last_obs = next_obs.copy()
         if term or trunc:
             buffer.wrapup_episode(len_episode)
             # Episode statistics
@@ -153,7 +143,7 @@ plt.savefig(Path(__file__).parent.joinpath("vpg_discrete.png"))
 
 
 # VALIDATION
-input("Press any key to evaluate agent")
+input("Press ENTER to evaluate agent")
 env = gym.make("CapsuleBreaker-v0", render_mode="human")
 last_obs, _ = env.reset()
 episode_return = 0.0
@@ -161,9 +151,19 @@ term, trunc = False, False
 for _ in range(env.spec.max_episode_steps):
     act_sample, log_probs = make_decision(prng_keys, actor, last_obs)
     # next_obs, rew, term, trunc, _ = env.step(np.array(log_probs.argmax()))
-    next_obs, rew, term, trunc, _ = env.step(int(act_sample))
+    next_obs, rew, term, trunc, info = env.step(int(act_sample))
+    # Step statistics (use these in learning steps to debug)
+    print("\n")
+    print(f"last observation: {last_obs}")
+    print(f"action: {act_sample}")
+    print(f"next observation: {next_obs}")
+    print(f"reward: {rew}")
+    print(f"episode terminated: {term}")
+    print(f"episode truncated: {trunc}")
+    print(f"info: {info}")
+    print("\n")
     episode_return += rew
-    last_obs = next_obs
+    last_obs = next_obs.copy()
     if term or trunc:
         print(f"\n---return: {episode_return}---\n")
         break
