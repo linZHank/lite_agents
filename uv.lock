@@ -27,24 +27,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/dd/5a/ad8d3ef9c13d5afcc1e44a77f11792ee717f6727b3320bddbc607e935e2a/box2d-py-2.3.5.tar.gz", hash = "sha256:b37dc38844bcd7def48a97111d2b082e4f81cca3cece7460feb3eacda0da2207", size = 374446, upload-time = "2018-10-02T01:03:23.527Z" }
 
 [[package]]
-name = "capsule2d"
-version = "0.1.0"
-source = { directory = "../Capsule2D" }
-dependencies = [
-    { name = "gymnasium" },
-    { name = "matplotlib" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "gymnasium", specifier = ">=1.2.0" },
-    { name = "matplotlib", specifier = ">=3.10.3" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pyqt6", specifier = ">=6.9.1" }]
-
-[[package]]
 name = "chex"
 version = "0.1.89"
 source = { registry = "https://pypi.org/simple" }
@@ -396,7 +378,6 @@ cpu = [
     { name = "jax" },
 ]
 dev = [
-    { name = "capsule2d" },
     { name = "gymnasium", extra = ["box2d"] },
     { name = "matplotlib" },
     { name = "pygame" },
@@ -417,7 +398,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 cpu = [{ name = "jax", specifier = ">=0.6.2" }]
 dev = [
-    { name = "capsule2d", directory = "../Capsule2D" },
     { name = "gymnasium", extras = ["box2d"], specifier = ">=1.2.0" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "pygame", specifier = ">=2.6.1" },
