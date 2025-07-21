@@ -3,6 +3,7 @@ import numpy as np
 
 import jax.numpy as jnp
 from flax import nnx
+from tensorflow_probability.substrates.jax.distributions import Categorical, Normal
 
 from scipy.signal import lfilter
 
@@ -35,55 +36,64 @@ class VPGBuffer(ReplayBuffer):
         return experience_batch
 
 
-class MLPNet(nnx.Module):
-    """A simple fully-connected Neural Network model"""
+class CategoricalActor:
+    """Actor for discrete actions space"""
 
     def __init__(
         self,
-        *,
-        rngs: nnx.Rngs,
-        input_dim: int,
-        output_dim: int,
+        observation_dims: int,
+        action_dims: int,
         hidden_sizes: tuple = (64, 64),
+        seed: int = 25,
     ):
-        assert len(hidden_sizes) >= 1
-        self.rngs = rngs
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.backbone_sizes = (input_dim, *hidden_sizes)
-        self.backbone_transforms = []
-
-    def __call__(self, x):
+        self.rngs = nnx.Rngs(seed)
+        self.observation_dim = observation_dims
+        self.action_dim = action_dims
+        self.backbone_sizes = (observation_dims, *hidden_sizes)
+        self.backbone_transforms = []  # TODO: functionize
         for i in range(len(self.backbone_sizes) - 1):
-            x = nnx.relu(
+            self.backbone_transforms.append(
                 nnx.Linear(
                     self.backbone_sizes[i], self.backbone_sizes[i + 1], rngs=self.rngs
-                )(x)
+                )
             )
-        y = nnx.Linear(self.backbone_sizes[-1], self.output_dim, rngs=self.rngs)(x)
-        return y
+        self.output_transform = nnx.Linear(
+            self.backbone_sizes[-1], action_dims, rngs=self.rngs
+        )
+
+    def __call__(self, x):
+        for trans in self.backbone_transforms:
+            x = nnx.relu(trans(x))
+        y = self.output_transform(x)
+        log_probas = nnx.log_softmax(y)  # log(pi(a|s))
+        policy_distributions = Categorical(logits=log_probas)
+
+        return log_probas, policy_distributions
 
 
-# class VPGAgent:
-#     def __init__(self, env_name: str, actor_type: str, seed: int = 25):
-#         self.rngs = nnx.Rngs(seed)
-#
-#     @nnx.jit
-#     def make_decision(self, obs: np.ndarray):
-#         log_probs = nnx.log_softmax(model(obs))  # policy: log(pi(a|s))
-#         distribution = tfp.distributions.Categorical(logits=log_probs)
-#         sampled_action = distribution.sample(seed=rngs)
-#         # log_prob_as = distribution.log_prob(sampled_action)
-#         return sampled_action, log_probs
-#
+class VPGAgent:
+    def __init__(
+        self,
+        env_fn,
+        seed: int = 25,
+    ) -> None:
+        self.actor = CategoricalActor(
+            env_fn.observation_space.shape[0], env_fn.action_space.n, seed=seed
+        )
+        self.rngs = self.actor.rngs
+
+    @nnx.jit
+    def make_decision(self, observation: np.ndarray):
+        logp, pi = self.actor(observation)
+        action = pi.sample(seed=self.rngs)
+        # log_prob_a_givens = pi.log_prob(action)
+        return action, logp
+
+
 if __name__ == "__main__":
     import gymnasium as gym
 
     env = gym.make("CartPole-v1", render_mode="human")
-    model = MLPNet(
-        rngs=nnx.Rngs(0),
-        input_dim=env.observation_space.shape[0],
-        output_dim=env.action_space.n,
-    )
-    dumo = env.observation_space.sample()
-    print(model(dumo))
+    agent = VPGAgent(env)
+    obs, info = env.reset()
+    act, logp = agent.make_decision(obs)
