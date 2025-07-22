@@ -8,14 +8,14 @@ import optax
 
 @nnx.jit
 def make_decision(rngs: nnx.Rngs, actor, obs: np.ndarray):
-    log_prob, pi = actor(obs)  # policy: log(pi(a|s))
+    pi = actor(obs)  # policy: log(pi(a|s))
     act = pi.sample(seed=rngs)
-    return act, jnp.exp(log_prob)
+    return act
 
 
 @nnx.jit
 def objective_fn(actor, experience_batch: ExperienceBatch):
-    _, policies = actor(experience_batch.obs)
+    policies = actor(experience_batch.obs)
     logpa_batch = policies.log_prob(experience_batch.act)
     objective_batch = experience_batch.ret * logpa_batch  # NOT expected return
 
@@ -25,7 +25,7 @@ def objective_fn(actor, experience_batch: ExperienceBatch):
 @nnx.jit
 def update_params(actor, optimizer, experience_batch):
     grad_fn = nnx.value_and_grad(objective_fn)
-    objective, grads = grad_fn(actor, experience_batch)
+    objectives, grads = grad_fn(actor, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
 
@@ -64,7 +64,7 @@ def learn(
         for st in range(
             (min_epoch_episodes + 1) * env.spec.max_episode_steps
         ):  # at least 10 finished episodes
-            act, _ = make_decision(rngs, actor, last_obs)
+            act = make_decision(rngs, actor, last_obs)
             next_obs, rew, term, trunc, info = env.step(np.array(act))
             buffer.store_step(last_obs, act, rew)
             # TODO: update journal in a util function
@@ -110,4 +110,4 @@ def learn(
 
 
 if __name__ == "__main__":
-    learn(max_epochs=128)
+    learn(max_epochs=2)
