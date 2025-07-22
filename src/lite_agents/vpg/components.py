@@ -83,4 +83,37 @@ class CategoricalActor(MLPNet):
         log_prob = nnx.log_softmax(y)  # log(pi(a|s))
         pi = Categorical(logits=log_prob)
 
-        return log_prob, pi
+        return pi
+
+
+class GaussianActor(MLPNet):
+    """Actor for discrete actions space"""
+
+    def __init__(
+        self,
+        rngs: nnx.Rngs,
+        observation_dims: int,
+        action_dims: int,
+        hidden_sizes: tuple = (64, 64),
+    ):
+        super().__init__(
+            rngs=rngs,
+            input_dims=observation_dims,
+            output_dims=action_dims,
+            hidden_sizes=hidden_sizes,
+        )
+
+    def __call__(self, x):
+        for trans in self.backbone_transforms:
+            x = nnx.relu(trans(x))
+        mu = self.output_transform(x)
+        log_sigma = self.output_transform(x)
+        pi = Normal(loc=mu, scale=jnp.exp(log_sigma))
+
+        return pi
+
+        x = nnx.relu(self.linear1(x))  # 1st layer
+        x = nnx.relu(self.linear2(x))  # 2nd layer
+        mu = self.linear3(x)  # mean
+        log_sigma = self.linear3(x)
+        return mu, log_sigma
