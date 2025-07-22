@@ -1,7 +1,11 @@
 import gymnasium as gym
 import numpy as np
-from lite_agents.vpg.components import VPGBuffer, ExperienceBatch, CategoricalActor
-import jax.numpy as jnp
+from lite_agents.vpg.components import (
+    VPGBuffer,
+    ExperienceBatch,
+    CategoricalActor,
+    GaussianActor,
+)
 from flax import nnx
 import optax
 
@@ -42,12 +46,20 @@ def learn(
     env = gym.make(env_name, render_mode="rgb_array")
     rngs = nnx.Rngs(seed)
     buffer = VPGBuffer([], [], [], [])
-    actor = CategoricalActor(
-        rngs,
-        env.observation_space.shape[0],
-        env.action_space.n,
-        hidden_sizes,
-    )
+    if isinstance(env.action_space, gym.spaces.Box):
+        actor = GaussianActor(
+            rngs,
+            env.observation_space.shape[0],
+            env.action_space.shape[0],
+            hidden_sizes,
+        )
+    elif isinstance(action_space, gym.spaces.Discrete):
+        actor = CategoricalActor(
+            rngs,
+            env.observation_space.shape[0],
+            env.action_space.n,
+            hidden_sizes,
+        )
     nnx.display(actor)
     optimizer = nnx.Optimizer(actor, optax.adamw(learning_rate))
     learning_journal = {
@@ -102,12 +114,10 @@ def learn(
     from pathlib import Path
 
     plt.plot(learning_journal["averaged_return"])
-    plt.ylim(0, 200)
-    plt.yticks(np.arange(0, 200, 20))
     plt.grid(visible=True, axis="y")
     plt.show()
     # plt.savefig(Path(__file__).parent.joinpath(f"{env_name}.png"))
 
 
 if __name__ == "__main__":
-    learn(max_epochs=2)
+    learn(env_name="Pendulum-v1", hidden_sizes=(128, 128), max_epochs=512)

@@ -111,9 +111,3 @@ class GaussianActor(MLPNet):
         pi = Normal(loc=mu, scale=jnp.exp(log_sigma))
 
         return pi
-
-        x = nnx.relu(self.linear1(x))  # 1st layer
-        x = nnx.relu(self.linear2(x))  # 2nd layer
-        mu = self.linear3(x)  # mean
-        log_sigma = self.linear3(x)
-        return mu, log_sigma
