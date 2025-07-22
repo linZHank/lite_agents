@@ -1,3 +1,4 @@
+from typing import Optional
 import gymnasium as gym
 import numpy as np
 from lite_agents.vpg.components import (
@@ -35,6 +36,7 @@ def update_params(actor, optimizer, experience_batch):
 
 def learn(
     env_name: str = "CartPole-v1",
+    env_options: Optional[dict] = {"render_mode": "rgb_array"},
     seed: int = 0,
     max_epochs: int = 64,
     learning_rate: float = 3e-4,
@@ -43,7 +45,7 @@ def learn(
     min_epoch_episodes: int = 10,  # minimal episodes per epoch
 ):
     # SETUP
-    env = gym.make(env_name, render_mode="rgb_array")
+    env = gym.make(env_name, **env_options)
     rngs = nnx.Rngs(seed)
     buffer = VPGBuffer([], [], [], [])
     if isinstance(env.action_space, gym.spaces.Box):
@@ -53,7 +55,7 @@ def learn(
             env.action_space.shape[0],
             hidden_sizes,
         )
-    elif isinstance(action_space, gym.spaces.Discrete):
+    elif isinstance(env.action_space, gym.spaces.Discrete):
         actor = CategoricalActor(
             rngs,
             env.observation_space.shape[0],
@@ -120,4 +122,10 @@ def learn(
 
 
 if __name__ == "__main__":
-    learn(env_name="Pendulum-v1", hidden_sizes=(128, 128), max_epochs=512)
+    # TODO: argparse
+    learn(
+        env_name="LunarLander-v3",
+        env_options={"continuous": True, "render_mode": "rgb_array"},
+        hidden_sizes=(128, 128),
+        max_epochs=128,
+    )
