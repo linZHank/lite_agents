@@ -11,6 +11,7 @@ from scipy.signal import lfilter
 ReplayBuffer = namedtuple("ReplayBuffer", "observations actions rewards step_returns")
 ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret")
 
+
 class VPGBuffer(ReplayBuffer):
     def store_step(self, obs, act, rew):
         self.observations.append(obs)
@@ -64,7 +65,7 @@ class CategoricalActor(nnx.Module):
             x = nnx.relu(trans(x))
         y = self.output_transform(x)
         log_prob = nnx.log_softmax(y)  # log(pi(a|s))
-        pi = Categorical(logits=log_probs)
+        pi = Categorical(logits=log_prob)
 
         return log_prob, pi
 
@@ -95,10 +96,9 @@ class VPGAgent:
         return -objective_batch.mean()
 
 
-
-
 if __name__ == "__main__":
     import gymnasium as gym
+
     buffer = VPGBuffer([], [], [], [])
     len_episode = 0
 
@@ -125,5 +125,3 @@ if __name__ == "__main__":
 
     exp_bat = buffer.extract_experience()
     obj_val = agent.compute_objective(exp_bat)
-
-
