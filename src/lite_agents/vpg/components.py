@@ -27,7 +27,7 @@ class VPGBuffer(ReplayBuffer):
     def extract_experience(self):
         observations_batch = jnp.array(self.observations)
         actions_batch = jnp.array(self.actions)
-        returns_batch = jnp.array(self.step_returns)
+        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
 
         experience_batch = ExperienceBatch(
             observations_batch, actions_batch, returns_batch
