@@ -11,7 +11,6 @@ from scipy.signal import lfilter
 ReplayBuffer = namedtuple("ReplayBuffer", "observations actions rewards step_returns")
 ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret")
 
-
 class VPGBuffer(ReplayBuffer):
     def store_step(self, obs, act, rew):
         self.observations.append(obs)
@@ -36,17 +35,16 @@ class VPGBuffer(ReplayBuffer):
         return experience_batch
 
 
-class CategoricalActor:
+class CategoricalActor(nnx.Module):
     """Actor for discrete actions space"""
 
     def __init__(
         self,
+        rngs: nnx.Rngs,
         observation_dims: int,
         action_dims: int,
         hidden_sizes: tuple = (64, 64),
-        seed: int = 25,
     ):
-        self.rngs = nnx.Rngs(seed)
         self.observation_dim = observation_dims
         self.action_dim = action_dims
         self.backbone_sizes = (observation_dims, *hidden_sizes)
@@ -54,21 +52,21 @@ class CategoricalActor:
         for i in range(len(self.backbone_sizes) - 1):
             self.backbone_transforms.append(
                 nnx.Linear(
-                    self.backbone_sizes[i], self.backbone_sizes[i + 1], rngs=self.rngs
+                    self.backbone_sizes[i], self.backbone_sizes[i + 1], rngs=rngs
                 )
             )
         self.output_transform = nnx.Linear(
-            self.backbone_sizes[-1], action_dims, rngs=self.rngs
+            self.backbone_sizes[-1], action_dims, rngs=rngs
         )
 
     def __call__(self, x):
         for trans in self.backbone_transforms:
             x = nnx.relu(trans(x))
         y = self.output_transform(x)
-        log_probas = nnx.log_softmax(y)  # log(pi(a|s))
-        policy_distributions = Categorical(logits=log_probas)
+        log_prob = nnx.log_softmax(y)  # log(pi(a|s))
+        pi = Categorical(logits=log_probs)
 
-        return log_probas, policy_distributions
+        return log_prob, pi
 
 
 class VPGAgent:
@@ -82,18 +80,50 @@ class VPGAgent:
         )
         self.rngs = self.actor.rngs
 
-    @nnx.jit
     def make_decision(self, observation: np.ndarray):
         logp, pi = self.actor(observation)
         action = pi.sample(seed=self.rngs)
         # log_prob_a_givens = pi.log_prob(action)
         return action, logp
 
+    @nnx.jit
+    def compute_objective(self, experience_batch: ExperienceBatch):
+        _, policy_batch = self.actor(experience_batch.obs)
+        logpa_batch = policy_batch.log_prob(experience_batch.act)
+        objective_batch = experience_batch.ret * logpa_batch  # NOT expected return
+
+        return -objective_batch.mean()
+
+
+
 
 if __name__ == "__main__":
     import gymnasium as gym
+    buffer = VPGBuffer([], [], [], [])
+    len_episode = 0
 
-    env = gym.make("CartPole-v1", render_mode="human")
+    env = gym.make("CartPole-v1", render_mode="rbg_array")
     agent = VPGAgent(env)
-    obs, info = env.reset()
-    act, logp = agent.make_decision(obs)
+    last_obs, info = env.reset()
+    for _ in range(env.spec.max_episode_steps):
+        act, logp = agent.make_decision(last_obs)
+        next_obs, rew, term, trunc, info = env.step(np.array(act))
+        print("\n")
+        print(f"last observation: {last_obs}")
+        print(f"action: {act}")
+        print(f"next observation: {next_obs}")
+        print(f"reward: {rew}")
+        print(f"episode terminated: {term}")
+        print(f"episode truncated: {trunc}")
+        print(f"info: {info}")
+        print("\n")
+        buffer.store_step(last_obs, act, rew)
+        len_episode += 1
+        last_obs = next_obs.copy()
+        if term or trunc:
+            last_obs, info = env.reset()
+
+    exp_bat = buffer.extract_experience()
+    obj_val = agent.compute_objective(exp_bat)
+
+
