@@ -24,10 +24,10 @@ def discount_cumsum(x, gamma):
     return lfilter([1], [1, float(-gamma)], x[::-1], axis=0)[::-1]
 
 
-dcsr = discount_cumsum(r, gamma)
+dcs_r = discount_cumsum(r, gamma)
 rev_r = r[-9:][::-1]  # reversed stepwise returns
 print(rev_r)
-dcsr_second = lfilter([1], [1, -gamma], rev_r)[::-1]  # discounted return togo
+lf_r = lfilter([1], [1, -gamma], rev_r)[::-1]  # discounted return togo
 
-print(dcsr)
-print(dcsr_second)
+print(dcs_r)
+print(lf_r)
