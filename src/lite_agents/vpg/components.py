@@ -20,7 +20,7 @@ class VPGBuffer(ReplayBuffer):
 
     def wrapup_episode(self, len_episode, discount=0.99):
         # self.step_returns.extend([sum(self.rewards[-len_episode:])] * len_episode)
-        rev_ep_rews = self.rewards[-len_episode:][::-1]  # reversed episodic rewards
+        rev_ep_rews = self.rewards[-len_episode:][::-1]  # reversed stepwise returns
         drtg = lfilter([1], [1, -discount], rev_ep_rews)[::-1]  # discounted return togo
         self.step_returns.extend(drtg.tolist())
 
