@@ -36,7 +36,9 @@ class VACBuffer(ReplayBuffer):
         v_arr = jnp.array(self.values[-len_episode:])
         # GAE-Lambda advantage
         td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma * V_{t+1} - V_t
-        gae_advs = jnp.flip(lfilter([1], [1, -gamma * lam], jnp.flip(td_errs)), axis=0)
+        gae_advs = jnp.flip(
+            lfilter([1], [1, -discount * lam], jnp.flip(td_errs)), axis=0
+        )
         self.advantages.extend(gae_advs.tolist())
         # Discounted returns to-go
         rev_ep_rews = self.rewards[-len_episode:][::-1]  # reversed episodic rewards
@@ -94,7 +96,7 @@ def make_decision(rngs: nnx.Rngs, actor: PolicyNet, critic: ValueNet, obs: np.nd
     policy = actor(obs)
     act = policy.sample(seed=rngs)
     val = critic(obs)
-    return act, val
+    return act.squeeze(), val.squeeze()
 
 
 @nnx.jit
@@ -124,7 +126,7 @@ def update_actor_params(actor, optimizer, experience_batch):
 @nnx.jit
 def update_critic_params(critic, optimizer, experience_batch):
     grad_fn = nnx.value_and_grad(loss_fn)
-    v_loss, grads = grad_fn(actor, experience_batch)
+    v_loss, grads = grad_fn(critic, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
 
@@ -147,7 +149,7 @@ journal = {
 }
 last_obs, info = env.reset()
 
-for e in range(4):
+for e in range(256):
     for st in range(6 * env.spec.max_episode_steps):
         act, last_val = make_decision(rngs, actor, critic, last_obs)
         next_obs, rew, term, trunc, info = env.step(np.array(act))
@@ -158,7 +160,8 @@ for e in range(4):
         journal["deposit_return"][-1] += rew
         last_obs = next_obs.copy()
         if term or trunc:
-            # buffer.wrapup_episode(end_val, journal["episode_len"][-1])
+            eoe_val = 0.0
+            buffer.wrapup_episode(eoe_val, journal["episode_len"][-1])
             # Episode statistics
             journal["episode_idx"] += 1
             journal["averaged_return"].append(
@@ -179,7 +182,9 @@ for e in range(4):
         f"===\nepoch {e + 1} \n\ttotal steps: {journal['step_idx']}\n\taveraged return: {journal['averaged_return'][-1]}\n==="
     )
     exp_batch = buffer.extract_experience()
-    # update_params(actor, optimizer, exp_batch)
+    update_actor_params(actor, optimizer_actor, exp_batch)
+    for _ in range(50):
+        update_critic_params(critic, optimizer_critic, exp_batch)
     buffer = VACBuffer([], [], [], [], [], [])
 
 plt.plot(journal["averaged_return"])
