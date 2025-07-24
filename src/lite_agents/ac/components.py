@@ -30,7 +30,7 @@ class ACBuffer(ReplayBuffer):
             discount (gamma): price of a reward in future will be penalized at present.
             compromise (lambda): balance variance and bias of advantage estimation.
                 GAE(gamma, lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
-                GAE(gamma, lambda=1): sum_{l=0}^{infty} gamma^l r+{t+1} - V(s_t)
+                GAE(gamma, lambda=1): sum_{l=0}^{infty} gamma^l r+{t+1} - V(s_t), low bias high variance
         """
         next_vals = self.values[-episode_len + 1 :]
         next_vals.append(eoe_value)
@@ -38,7 +38,7 @@ class ACBuffer(ReplayBuffer):
         r_arr = jnp.array(self.rewards[-episode_len:])
         v_arr = jnp.array(self.values[-episode_len:])
         # GAE-Lambda advantage
-        td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma * V_{t+1} - V_t
+        td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma V(s_{t+1}) - V(s_t)
         gae_advs = jnp.flip(
             lfilter([1], [1, -discount * compromise], jnp.flip(td_errs)), axis=0
         )
@@ -136,6 +136,30 @@ class GaussianActor(MLPNet):
         pi = Normal(loc=mu, scale=jnp.exp(log_sigma))
 
         return pi
+
+
+class Critic(MLPNet):
+    """Critic Net"""
+
+    def __init__(
+        self,
+        rngs: nnx.Rngs,
+        observation_dims: int,
+        value_dims: int = 1,
+        hidden_sizes: tuple = (64, 64),
+    ):
+        super().__init__(
+            rngs=rngs,
+            input_dims=observation_dims,
+            output_dims=value_dims,
+            hidden_sizes=hidden_sizes,
+        )
+
+    def __call__(self, x):
+        for trans in self.backbone_transforms:
+            x = nnx.relu(trans(x))
+        v = self.output_transform(x)
+        return v
 
 
 if __name__ == "__main__":
