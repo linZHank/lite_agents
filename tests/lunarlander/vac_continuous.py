@@ -8,7 +8,7 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-from tensorflow_probability.substrates.jax.distributions import Categorical
+from tensorflow_probability.substrates.jax.distributions import Normal
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
 
@@ -27,28 +27,38 @@ class VACBuffer(ReplayBuffer):
         self.rewards.append(rew)
         self.values.append(val)
 
-    def wrapup_episode(self, val_eoe, len_episode, discount=0.99, lam=0.97):
-        next_vals = self.values[-len_episode + 1 :]
-        next_vals.append(val_eoe)
+    def wrapup_episode(self, eoe_value, episode_len, discount=0.99, compromise=0.97):
+        """
+        Process raw data after an episode, calculate returns-to-go and GAE advantage estimations.
+        Args:
+            eoe_value: end of episode value estimation.
+            episode_len: number of steps in the just-finished episode.
+            discount (gamma): price of a reward in future will be penalized at present.
+            compromise (lambda): balance variance and bias of advantage estimation.
+                GAE(\gamma, \lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
+                GAE(\gamma, \lambda=1): \sum_{l=0}^{\infty} \gamma^l r+{t+1} - V(s_t)
+        """
+        next_vals = self.values[-episode_len + 1 :]
+        next_vals.append(eoe_value)
         nv_arr = jnp.array(next_vals)
-        r_arr = jnp.array(self.rewards[-len_episode:])
-        v_arr = jnp.array(self.values[-len_episode:])
+        r_arr = jnp.array(self.rewards[-episode_len:])
+        v_arr = jnp.array(self.values[-episode_len:])
         # GAE-Lambda advantage
         td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma * V_{t+1} - V_t
         gae_advs = jnp.flip(
-            lfilter([1], [1, -discount * lam], jnp.flip(td_errs)), axis=0
+            lfilter([1], [1, -discount * compromise], jnp.flip(td_errs)), axis=0
         )
         self.advantages.extend(gae_advs.tolist())
         # Discounted returns to-go
-        rev_ep_rews = self.rewards[-len_episode:][::-1]  # reversed episodic rewards
+        rev_ep_rews = self.rewards[-episode_len:][::-1]  # reversed episodic rewards
         drtg = lfilter([1], [1, -discount], rev_ep_rews)[::-1]  # discounted return togo
         self.step_returns.extend(drtg.tolist())
 
     def extract_experience(self):
         observations_batch = jnp.array(self.observations)
         actions_batch = jnp.array(self.actions)
-        returns_batch = jnp.array(self.step_returns)
-        advantages_batch = jnp.array(self.advantages)
+        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
+        advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
 
         experience_batch = ExperienceBatch(
             observations_batch, actions_batch, returns_batch, advantages_batch
@@ -63,14 +73,14 @@ class PolicyNet(nnx.Module):
     def __init__(self, *, rngs: nnx.Rngs):
         self.linear1 = nnx.Linear(8, 128, rngs=rngs)
         self.linear2 = nnx.Linear(128, 128, rngs=rngs)
-        self.linear3 = nnx.Linear(128, 4, rngs=rngs)
+        self.linear3 = nnx.Linear(128, 2, rngs=rngs)
 
     def __call__(self, x):
         x = nnx.relu(self.linear1(x))
         x = nnx.relu(self.linear2(x))
-        y = self.linear3(x)
-        log_prob = nnx.log_softmax(y)  # log(pi(a|s))
-        pi = Categorical(logits=log_prob)
+        mu = self.linear3(x)
+        log_sigma = self.linear3(x)  # log(pi(a|s))
+        pi = Normal(loc=mu, scale=jnp.exp(log_sigma))
 
         return pi
 
@@ -108,7 +118,7 @@ def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
 
 
 @nnx.jit
-def loss_fn(ciritic: ValueNet, experience_batch: ExperienceBatch):
+def loss_fn(critic: ValueNet, experience_batch: ExperienceBatch):
     vals = critic(experience_batch.obs)
     v_loss = (vals - experience_batch.ret) ** 2
 
@@ -130,7 +140,7 @@ def update_critic_params(critic, optimizer, experience_batch):
 
 
 # SETUP
-env = gym.make("LunarLander-v3", render_mode="rgb_array")
+env = gym.make("LunarLander-v3", continuous=True, render_mode="rgb_array")
 rngs = nnx.Rngs(25)
 buffer = VACBuffer([], [], [], [], [], [])
 actor = PolicyNet(rngs=rngs)
@@ -184,7 +194,7 @@ for e in range(256):
     )
     exp_batch = buffer.extract_experience()
     update_actor_params(actor, optimizer_actor, exp_batch)
-    for _ in range(50):
+    for _ in range(80):
         update_critic_params(critic, optimizer_critic, exp_batch)
     buffer = VACBuffer([], [], [], [], [], [])
 
@@ -192,12 +202,12 @@ plt.plot(journal["averaged_return"])
 # plt.ylim(0, 200)
 # plt.yticks(np.arange(0, 200, 20))
 plt.grid(visible=True)
-plt.savefig(Path(__file__).parent.joinpath("vac_discrete.png"))
+plt.savefig(Path(__file__).parent.joinpath("vac_continuous.png"))
 
 
 # VALIDATION
 input("Press any key to evaluate agent")
-env = gym.make("LunarLander-v3", render_mode="human")
+env = gym.make("LunarLander-v3", continuous=True, render_mode="human")
 last_obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
