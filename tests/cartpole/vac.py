@@ -8,7 +8,6 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-from tensorflow_probability.substrates.jax import distributions
 from tensorflow_probability.substrates.jax.distributions import Categorical
 import matplotlib.pyplot as plt
 from scipy.signal import lfilter
@@ -109,7 +108,7 @@ def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
 
 
 @nnx.jit
-def loss_fn(ciritic: ValueNet, experience_batch: ExperienceBatch):
+def loss_fn(critic: ValueNet, experience_batch: ExperienceBatch):
     vals = critic(experience_batch.obs)
     v_loss = (vals - experience_batch.ret) ** 2
 
@@ -190,9 +189,10 @@ for e in range(256):
     buffer = VACBuffer([], [], [], [], [], [])
 
 plt.plot(journal["averaged_return"])
+plt.ylim(0, 200)
+plt.yticks(np.arange(0, 200, 20))
 plt.grid(visible=True, axis="y")
-plt.show()
-# plt.savefig(Path(__file__).parent.joinpath("vpg.png"))
+plt.savefig(Path(__file__).parent.joinpath("vac.png"))
 
 
 # VALIDATION
