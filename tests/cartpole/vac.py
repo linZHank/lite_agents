@@ -160,7 +160,9 @@ for e in range(256):
         journal["deposit_return"][-1] += rew
         last_obs = next_obs.copy()
         if term or trunc:
-            eoe_val = 0.0
+            eoe_val = 0.0  # end of episode value
+            if trunc:
+                _, eoe_val = make_decision(rngs, actor, critic, last_obs)
             buffer.wrapup_episode(eoe_val, journal["episode_len"][-1])
             # Episode statistics
             journal["episode_idx"] += 1
