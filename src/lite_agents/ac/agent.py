@@ -2,20 +2,22 @@ from typing import Optional
 import gymnasium as gym
 import numpy as np
 from lite_agents.vpg.components import (
-    VPGBuffer,
+    ACBuffer,
     ExperienceBatch,
     CategoricalActor,
     GaussianActor,
+    Critic,
 )
 from flax import nnx
 import optax
 
 
 @nnx.jit
-def make_decision(rngs: nnx.Rngs, actor, obs: np.ndarray):
+def make_decision_and_assess(rngs: nnx.Rngs, actor, critic: Critic, obs: np.ndarray):
     pi = actor(obs)  # policy: log(pi(a|s))
     act = pi.sample(seed=rngs)
-    return act
+    val = critic(obs)
+    return act.squeeze(), val.squeeze()
 
 
 @nnx.jit
@@ -38,16 +40,18 @@ def learn(
     env_name: str = "CartPole-v1",
     env_options: Optional[dict] = {"render_mode": "rgb_array"},
     seed: int = 0,
-    max_epochs: int = 64,
-    learning_rate: float = 3e-4,
     discount: float = 0.99,
+    compromise: float = 0.97,
+    max_epochs: int = 64,
+    actor_lr: float = 3e-4,
+    critic_lr: float = 1e-4,
     hidden_sizes: tuple = (64, 64),
     min_epoch_episodes: int = 10,  # minimal episodes per epoch
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
     rngs = nnx.Rngs(seed)
-    buffer = VPGBuffer([], [], [], [])
+    buffer = ACBuffer([], [], [], [], [], [])
     if isinstance(env.action_space, gym.spaces.Box):
         actor = GaussianActor(
             rngs,
@@ -62,8 +66,11 @@ def learn(
             env.action_space.n,
             hidden_sizes,
         )
+    critic = Critic(rngs, env.observation_space.shape[0], hidden_sizes)
     nnx.display(actor)
-    optimizer = nnx.Optimizer(actor, optax.adamw(learning_rate))
+    nnx.display(critic)
+    actor_optimizer = nnx.Optimizer(actor, optax.adamw(actor_lr))
+    critic_optimizer = nnx.Optimizer(critic, optax.adamw(critic_lr))
     learning_journal = {
         "episode_idx": 0,
         "step_idx": 0,
@@ -78,9 +85,9 @@ def learn(
         for st in range(
             (min_epoch_episodes + 1) * env.spec.max_episode_steps
         ):  # at least 10 finished episodes
-            act = make_decision(rngs, actor, last_obs)
+            act, last_val = make_decision_and_assess(rngs, actor, critic, last_obs)
             next_obs, rew, term, trunc, info = env.step(np.array(act))
-            buffer.store_step(last_obs, act, rew)
+            buffer.store_step(last_obs, act, rew, last_val)
             # TODO: update journal in a util function
             learning_journal["step_idx"] += 1
             learning_journal["episode_len"][-1] += 1
