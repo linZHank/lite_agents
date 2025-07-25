@@ -1,7 +1,7 @@
 from typing import Optional
 import gymnasium as gym
 import numpy as np
-from lite_agents.vpg.components import (
+from lite_agents.ac.components import (
     ACBuffer,
     ExperienceBatch,
     CategoricalActor,
@@ -23,16 +23,31 @@ def make_decision_and_assess(rngs: nnx.Rngs, actor, critic: Critic, obs: np.ndar
 @nnx.jit
 def objective_fn(actor, experience_batch: ExperienceBatch):
     policies = actor(experience_batch.obs)
-    logpa_batch = policies.log_prob(experience_batch.act)
-    objective_batch = experience_batch.ret * logpa_batch  # NOT expected return
+    log_pi_as = policies.log_prob(experience_batch.act)
+    objective_batch = experience_batch.adv * log_pi_as
 
     return -objective_batch.mean()
 
 
 @nnx.jit
-def update_params(actor, optimizer, experience_batch):
+def loss_fn(critic: Critic, experience_batch: ExperienceBatch):
+    vals = critic(experience_batch.obs)
+    v_loss = (vals - experience_batch.ret) ** 2  # TODO: use MSE from a lib
+
+    return v_loss.mean()
+
+
+@nnx.jit
+def update_actor_params(actor, optimizer, experience_batch):
     grad_fn = nnx.value_and_grad(objective_fn)
-    objectives, grads = grad_fn(actor, experience_batch)
+    objective, grads = grad_fn(actor, experience_batch)
+    optimizer.update(grads)  # In-place updates.
+
+
+@nnx.jit
+def update_critic_params(critic, optimizer, experience_batch):
+    grad_fn = nnx.value_and_grad(loss_fn)
+    v_loss, grads = grad_fn(critic, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
 
