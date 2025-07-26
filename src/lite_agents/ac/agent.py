@@ -69,6 +69,7 @@ def learn(
     critic_update_iters=80,
     hidden_sizes: tuple = (64, 64),
     min_epoch_episodes: int = 5,  # minimal episodes per epoch
+    eval_flag: bool = False,
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -156,13 +157,29 @@ def learn(
     plt.show()
     # plt.savefig(Path(__file__).parent.joinpath(f"{env_name}.png"))
 
+    # Evaluation
+    if eval_flag:  # TODO: save and load
+        env_options["render_mode"] = "human"
+        env = gym.make(env_name, **env_options)
+        obs, _ = env.reset()
+        episode_return = 0.0
+        for _ in range(env.spec.max_episode_steps):
+            act, _ = resolve_and_assess(rngs, actor, critic, obs)
+            obs, rew, term, trunc, _ = env.step(np.array(act))
+            episode_return += rew
+            if term or trunc:
+                print(f"\n---return: {episode_return}---\n")
+                break
+
 
 if __name__ == "__main__":
     # TODO: argparse
     learn(
-        env_name="CartPole-v1",
-        # env_options={"continuous": False, "render_mode": "rgb_array"},
+        # env_name="CartPole-v1",
+        env_name="LunarLander-v3",
+        # env_options={"continuous": True, "render_mode": "rgb_array"},
         hidden_sizes=(128, 128),
         max_epochs=64,
         critic_update_iters=50,
+        eval_flag=True,
     )
