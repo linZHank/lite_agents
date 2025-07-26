@@ -1,5 +1,6 @@
 from collections import namedtuple
 
+import numpy as np
 import jax.numpy as jnp
 from flax import nnx
 from tensorflow_probability.substrates.jax.distributions import Categorical, Normal
@@ -51,8 +52,10 @@ class ACBuffer(ReplayBuffer):
     def extract_experience(self):
         observations_batch = jnp.array(self.observations)
         actions_batch = jnp.array(self.actions)
-        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
-        advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
+        # returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
+        # advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
+        returns_batch = jnp.array(self.step_returns)
+        advantages_batch = jnp.array(self.advantages)
 
         experience_batch = ExperienceBatch(
             observations_batch, actions_batch, returns_batch, advantages_batch
