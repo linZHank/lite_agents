@@ -57,10 +57,10 @@ class ACBuffer(ReplayBuffer):
     def extract_experience(self):
         observations_batch = jnp.array(self.observations)
         actions_batch = jnp.array(self.actions)
-        # returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
-        # advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
-        returns_batch = jnp.array(self.step_returns)
-        advantages_batch = jnp.array(self.advantages)
+        # returns_batch = jnp.array(self.step_returns)
+        # advantages_batch = jnp.array(self.advantages)
+        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
+        advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
 
         experience_batch = ExperienceBatch(
             observations_batch, actions_batch, returns_batch, advantages_batch
@@ -82,7 +82,7 @@ class PolicyNet(nnx.Module):
         x = nnx.relu(self.linear2(x))  # 1st layer
         y = self.linear3(x)  # 1st layer
         log_prob = nnx.log_softmax(y)  # log(pi(a|s))
-        pi = Categorical(logits=log_prob)
+        pi = Categorical(logits=jnp.expand_dims(log_prob, axis=1))
 
         return pi
 
