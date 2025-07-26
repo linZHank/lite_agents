@@ -20,33 +20,45 @@ ReplayBuffer = namedtuple(
 ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret adv")
 
 
-class VACBuffer(ReplayBuffer):
+class ACBuffer(ReplayBuffer):
     def store_step(self, obs, act, rew, val):
         self.observations.append(obs)
         self.actions.append(act)
         self.rewards.append(rew)
         self.values.append(val)
 
-    def wrapup_episode(self, val_eoe, len_episode, discount=0.99, lam=0.95):
-        next_vals = self.values[-len_episode + 1 :]
-        next_vals.append(val_eoe)
+    def wrapup_episode(self, eoe_value, episode_len, discount=0.99, compromise=0.97):
+        """
+        Process raw data after an episode, calculate returns-to-go and GAE advantage estimations.
+        Args:
+            eoe_value: end of episode value estimation.
+            episode_len: number of steps in the just-finished episode.
+            discount (gamma): price of a reward in future will be penalized at present.
+            compromise (lambda): balance variance and bias of advantage estimation.
+                GAE(gamma, lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
+                GAE(gamma, lambda=1): sum_{l=0}^{infty} gamma^l r+{t+1} - V(s_t), low bias high variance
+        """
+        next_vals = self.values[-episode_len + 1 :]
+        next_vals.append(eoe_value)
         nv_arr = jnp.array(next_vals)
-        r_arr = jnp.array(self.rewards[-len_episode:])
-        v_arr = jnp.array(self.values[-len_episode:])
+        r_arr = jnp.array(self.rewards[-episode_len:])
+        v_arr = jnp.array(self.values[-episode_len:])
         # GAE-Lambda advantage
-        td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma * V_{t+1} - V_t
+        td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma V(s_{t+1}) - V(s_t)
         gae_advs = jnp.flip(
-            lfilter([1], [1, -discount * lam], jnp.flip(td_errs)), axis=0
+            lfilter([1], [1, -discount * compromise], jnp.flip(td_errs)), axis=0
         )
         self.advantages.extend(gae_advs.tolist())
         # Discounted returns to-go
-        rev_ep_rews = self.rewards[-len_episode:][::-1]  # reversed episodic rewards
+        rev_ep_rews = self.rewards[-episode_len:][::-1]  # reversed episodic rewards
         drtg = lfilter([1], [1, -discount], rev_ep_rews)[::-1]  # discounted return togo
         self.step_returns.extend(drtg.tolist())
 
     def extract_experience(self):
         observations_batch = jnp.array(self.observations)
         actions_batch = jnp.array(self.actions)
+        # returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
+        # advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
         returns_batch = jnp.array(self.step_returns)
         advantages_batch = jnp.array(self.advantages)
 
@@ -91,10 +103,11 @@ class ValueNet(nnx.Module):
 
 
 @nnx.jit
-def make_decision(rngs: nnx.Rngs, actor: PolicyNet, critic: ValueNet, obs: np.ndarray):
-    policy = actor(obs)
-    act = policy.sample(seed=rngs)
+def resolve_and_assess(rngs: nnx.Rngs, actor, critic: Critic, obs: np.ndarray):
+    pi = actor(obs)
+    act = pi.sample(seed=rngs)
     val = critic(obs)
+
     return act.squeeze(), val.squeeze()
 
 
@@ -132,7 +145,7 @@ def update_critic_params(critic, optimizer, experience_batch):
 # SETUP
 env = gym.make("CartPole-v1", render_mode="rgb_array")
 rngs = nnx.Rngs(25)
-buffer = VACBuffer([], [], [], [], [], [])
+buffer = ACBuffer([], [], [], [], [], [])
 actor = PolicyNet(rngs=rngs)
 critic = ValueNet(rngs=rngs)
 nnx.display(actor)
@@ -148,9 +161,9 @@ journal = {
 }
 last_obs, info = env.reset()
 
-for e in range(256):
+for e in range(64):
     for st in range(6 * env.spec.max_episode_steps):
-        act, last_val = make_decision(rngs, actor, critic, last_obs)
+        act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
         next_obs, rew, term, trunc, info = env.step(np.array(act))
         buffer.store_step(last_obs, act, rew, last_val)
         # TODO: update journal in a util function
@@ -159,9 +172,10 @@ for e in range(256):
         journal["deposit_return"][-1] += rew
         last_obs = next_obs.copy()
         if term or trunc:
-            eoe_val = 0.0  # end of episode value
             if trunc:
-                _, eoe_val = make_decision(rngs, actor, critic, last_obs)
+                eoe_val = jnp.squeeze(critic(last_obs))
+            else:
+                eoe_val = jnp.zeros(shape=())
             buffer.wrapup_episode(eoe_val, journal["episode_len"][-1])
             # Episode statistics
             journal["episode_idx"] += 1
@@ -186,7 +200,7 @@ for e in range(256):
     update_actor_params(actor, optimizer_actor, exp_batch)
     for _ in range(50):
         update_critic_params(critic, optimizer_critic, exp_batch)
-    buffer = VACBuffer([], [], [], [], [], [])
+    buffer = ACBuffer([], [], [], [], [], [])
 
 plt.plot(journal["averaged_return"])
 plt.ylim(0, 200)
@@ -202,11 +216,10 @@ last_obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
 for _ in range(env.spec.max_episode_steps):
-    act, val = make_decision(rngs, actor, critic, last_obs)
-    next_obs, rew, term, trunc, _ = env.step(int(act))
+    act, val = resolve_and_assess(rngs, actor, critic, last_obs)
+    next_obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
     episode_return += rew
     last_obs = next_obs
     if term or trunc:
         print(f"\n---return: {episode_return}---\n")
         break
-env.close()
