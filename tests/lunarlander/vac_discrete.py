@@ -117,7 +117,7 @@ class PolicyNet(nnx.Module):
         x = nnx.relu(self.linear2(x))
         y = self.linear3(x)
         log_prob = nnx.log_softmax(y)  # log(pi(a|s))
-        pi = Categorical(logits=log_prob)
+        pi = Categorical(logits=jnp.expand_dims(log_prob, axis=1))
 
         return pi
 
@@ -171,11 +171,14 @@ def update_critic_params(critic, optimizer, experience_batch):
 
 @nnx.jit
 def resolve_and_assess(rngs: nnx.Rngs, actor, critic: ValueNet, obs: np.ndarray):
-    pi = actor(obs)
+    """
+    Make decision and assess value based on one step of observation
+    """
+    pi = actor(jnp.expand_dims(obs, axis=0))
     act = pi.sample(seed=rngs)
     val = critic(obs)
 
-    return act.squeeze(), val.squeeze()
+    return act.squeeze(axis=-1), val.squeeze()
 
 
 # SETUP
@@ -200,7 +203,7 @@ last_obs, info = env.reset()
 for e in range(64):
     for st in range(6 * env.spec.max_episode_steps):
         act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
-        next_obs, rew, term, trunc, info = env.step(np.array(act))
+        next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
         buffer.store_step(last_obs, act, rew, last_val)
         # TODO: update journal in a util function
         journal["step_idx"] += 1
@@ -246,17 +249,16 @@ plt.savefig(Path(__file__).parent.joinpath("vac_discrete.png"))
 
 
 # VALIDATION
-input("Press any key to evaluate agent")
-env = gym.make("LunarLander-v3", render_mode="human")
-last_obs, _ = env.reset()
-episode_return = 0.0
-term, trunc = False, False
-for _ in range(env.spec.max_episode_steps):
-    act, val = resolve_and_assess(rngs, actor, critic, last_obs)
-    next_obs, rew, term, trunc, _ = env.step(np.array(act))
-    episode_return += rew
-    last_obs = next_obs
-    if term or trunc:
-        print(f"\n---return: {episode_return}---\n")
-        break
-env.close()
+# input("Press any key to evaluate agent")
+# env = gym.make("LunarLander-v3", render_mode="human")
+# last_obs, _ = env.reset()
+# episode_return = 0.0
+# term, trunc = False, False
+# for _ in range(env.spec.max_episode_steps):
+#     act, val = resolve_and_assess(rngs, actor, critic, last_obs)
+#     next_obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+#     episode_return += rew
+#     last_obs = next_obs
+#     if term or trunc:
+#         print(f"\n---return: {episode_return}---\n")
+#         break

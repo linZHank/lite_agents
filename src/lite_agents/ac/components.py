@@ -22,16 +22,16 @@ class ACBuffer(ReplayBuffer):
         self.rewards.append(rew)
         self.values.append(val)
 
-    def wrapup_episode(self, eoe_value, episode_len, discount=0.99, compromise=0.97):
+    def wrapup_episode(self, eoe_value, episode_len, discount=0.99, tradeoff=0.97):
         """
         Process raw data after an episode, calculate returns-to-go and GAE advantage estimations.
         Args:
             eoe_value: end of episode value estimation.
             episode_len: number of steps in the just-finished episode.
             discount (gamma): price of a reward in future will be penalized at present.
-            compromise (lambda): balance variance and bias of advantage estimation.
-                GAE(gamma, lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
-                GAE(gamma, lambda=1): sum_{l=0}^{infty} gamma^l r+{t+1} - V(s_t), low bias high variance
+            tradeoff (lambda): balance variance and bias of advantage estimation.
+                GAE(lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
+                GAE(lambda=1): sum_{l=0}^{infty} gamma^l r+{t+1} - V(s_t), low bias high variance
         """
         next_vals = self.values[-episode_len + 1 :]
         next_vals.append(eoe_value)
@@ -41,7 +41,7 @@ class ACBuffer(ReplayBuffer):
         # GAE-Lambda advantage
         td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma V(s_{t+1}) - V(s_t)
         gae_advs = jnp.flip(
-            lfilter([1], [1, -discount * compromise], jnp.flip(td_errs)), axis=0
+            lfilter([1], [1, -discount * tradeoff], jnp.flip(td_errs)), axis=0
         )
         self.advantages.extend(gae_advs.tolist())
         # Discounted returns to-go
@@ -50,12 +50,10 @@ class ACBuffer(ReplayBuffer):
         self.step_returns.extend(drtg.tolist())
 
     def extract_experience(self):
-        observations_batch = jnp.array(self.observations)
+        observations_batch = jnp.array(self.observations)  # NOTE: won't work under 1D
         actions_batch = jnp.array(self.actions)
-        # returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
-        # advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
-        returns_batch = jnp.array(self.step_returns)
-        advantages_batch = jnp.array(self.advantages)
+        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
+        advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
 
         experience_batch = ExperienceBatch(
             observations_batch, actions_batch, returns_batch, advantages_batch
@@ -109,7 +107,7 @@ class CategoricalActor(MLPNet):
             x = nnx.relu(trans(x))
         y = self.output_transform(x)
         log_prob = nnx.log_softmax(y)  # log(pi(a|s))
-        pi = Categorical(logits=log_prob)
+        pi = Categorical(logits=jnp.expand_dims(log_prob, axis=1))
 
         return pi
 
@@ -163,18 +161,3 @@ class Critic(MLPNet):
             x = nnx.relu(trans(x))
         v = self.output_transform(x)
         return v
-
-
-if __name__ == "__main__":
-    import gymnasium as gym
-
-    env = gym.make("LunarLander-v3", continuous=True, render_mode="rgb_array")
-    dummy_buffer = ACBuffer([], [], [], [], [], [])
-    lo, i = env.reset()
-    for _ in range(1024):
-        a = env.action_space.sample()
-        no, r, te, tr, i = env.step(a)
-        dummy_buffer.store_step(lo, a, r, v)
-        lo = no.copy()
-        if te or tr:
-            lo, i = env.reset()

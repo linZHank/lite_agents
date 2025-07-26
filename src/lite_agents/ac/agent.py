@@ -40,6 +40,8 @@ def update_actor_params(actor, optimizer, experience_batch):
     objective, grads = grad_fn(actor, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
+    return objective
+
 
 @nnx.jit
 def update_critic_params(critic, optimizer, experience_batch):
@@ -47,14 +49,16 @@ def update_critic_params(critic, optimizer, experience_batch):
     v_loss, grads = grad_fn(critic, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
+    return v_loss
+
 
 @nnx.jit
 def resolve_and_assess(rngs: nnx.Rngs, actor, critic: Critic, obs: np.ndarray):
-    pi = actor(obs)
+    pi = actor(jnp.expand_dims(obs, axis=0))
     act = pi.sample(seed=rngs)
     val = critic(obs)
 
-    return act.squeeze(), val.squeeze()
+    return act.squeeze(axis=-1), val.squeeze()
 
 
 def learn(
@@ -62,7 +66,7 @@ def learn(
     env_options: Optional[dict] = {"render_mode": "rgb_array"},
     seed: int = 25,
     discount: float = 0.99,
-    compromise: float = 0.97,
+    tradeoff: float = 0.97,
     max_epochs: int = 64,
     actor_lr: float = 3e-4,
     critic_lr: float = 1e-4,
@@ -112,7 +116,7 @@ def learn(
         for st in range((min_epoch_episodes + 1) * env.spec.max_episode_steps):
             # Play a step
             act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
-            next_obs, rew, term, trunc, info = env.step(np.array(act))
+            next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
             buffer.store_step(last_obs, act, rew, last_val)
             journal_learn["step_idx"] += 1  # TODO: update journal in a util function
             journal_learn["episode_len"][-1] += 1
@@ -125,7 +129,7 @@ def learn(
                 else:
                     eoe_val = jnp.zeros(shape=())
                 buffer.wrapup_episode(
-                    eoe_val, journal_learn["episode_len"][-1], discount, compromise
+                    eoe_val, journal_learn["episode_len"][-1], discount, tradeoff
                 )
                 journal_learn["episode_idx"] += 1
                 journal_learn["averaged_return"].append(
@@ -165,7 +169,7 @@ def learn(
         episode_return = 0.0
         for _ in range(env.spec.max_episode_steps):
             act, _ = resolve_and_assess(rngs, actor, critic, obs)
-            obs, rew, term, trunc, _ = env.step(np.array(act))
+            obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
             episode_return += rew
             if term or trunc:
                 print(f"\n---return: {episode_return}---\n")
@@ -175,8 +179,8 @@ def learn(
 if __name__ == "__main__":
     # TODO: argparse
     learn(
-        # env_name="CartPole-v1",
-        env_name="LunarLander-v3",
+        env_name="CartPole-v1",
+        # env_name="LunarLander-v3",
         # env_options={"continuous": True, "render_mode": "rgb_array"},
         hidden_sizes=(128, 128),
         max_epochs=64,
