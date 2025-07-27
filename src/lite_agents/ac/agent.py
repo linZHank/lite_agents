@@ -35,19 +35,23 @@ def loss_fn(critic: Critic, experience_batch: ExperienceBatch):
 
 
 @nnx.jit
-def update_actor_params(actor, optimizer, experience_batch):
+def update_actor_params(
+    actor, actor_optimizer: nnx.Optimizer, experience_batch: ExperienceBatch
+):
     grad_fn = nnx.value_and_grad(objective_fn)
     objective, grads = grad_fn(actor, experience_batch)
-    optimizer.update(grads)  # In-place updates.
+    actor_optimizer.update(grads)  # In-place updates.
 
     return objective
 
 
 @nnx.jit
-def update_critic_params(critic, optimizer, experience_batch):
+def update_critic_params(
+    critic: Critic, critic_optimizer: nnx.Optimizer, experience_batch: ExperienceBatch
+):
     grad_fn = nnx.value_and_grad(loss_fn)
     v_loss, grads = grad_fn(critic, experience_batch)
-    optimizer.update(grads)  # In-place updates.
+    critic_optimizer.update(grads)  # In-place updates.
 
     return v_loss
 
