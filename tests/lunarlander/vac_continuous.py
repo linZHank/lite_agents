@@ -167,13 +167,13 @@ journal = {
 }
 
 last_obs, info = env.reset()
-for e in range(64):
+for e in range(2):  # try 64
     for st in range(6 * env.spec.max_episode_steps):
         # Play a step
         act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
         next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
-        last_obs = next_obs.copy()
         buffer.store_step(last_obs, act, rew, last_val)
+        last_obs = next_obs.copy()
         # Step statistics
         journal["step_idx"] += 1  # TODO: update journal in a util function
         journal["episode_len"][-1] += 1
@@ -204,7 +204,7 @@ for e in range(64):
     exp_batch = buffer.extract_experience()
     obj_inv = update_actor_params(actor, optimizer_actor, exp_batch)
     print(f"Policy objective: {-obj_inv}")
-    for _ in range(80):
+    for _ in range(50):
         v_loss = update_critic_params(critic, optimizer_critic, exp_batch)
         print(f"Value estimation loss: {v_loss}")
     buffer = ACBuffer([], [], [], [], [], [])
@@ -220,15 +220,15 @@ plt.savefig(Path(__file__).parent.joinpath("vac_continuous.png"))
 
 
 # VALIDATION
-input("Press any key to evaluate agent")
-env = gym.make("LunarLander-v3", continuous=True, render_mode="human")
-obs, _ = env.reset()
-episode_return = 0.0
-term, trunc = False, False
-for _ in range(env.spec.max_episode_steps):
-    act, _ = resolve_and_assess(rngs, actor, critic, obs)
-    obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
-    episode_return += rew
-    if term or trunc:
-        print(f"\n---Evaluation episode return: {episode_return}---\n")
-        break
+# input("Press any key to evaluate agent")
+# env = gym.make("LunarLander-v3", continuous=True, render_mode="human")
+# obs, _ = env.reset()
+# episode_return = 0.0
+# term, trunc = False, False
+# for _ in range(env.spec.max_episode_steps):
+#     act, _ = resolve_and_assess(rngs, actor, critic, obs)
+#     obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+#     episode_return += rew
+#     if term or trunc:
+#         print(f"\n---Evaluation episode return: {episode_return}---\n")
+#         break
