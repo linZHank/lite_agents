@@ -20,23 +20,23 @@ ReplayBuffer = namedtuple(
 ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret adv")
 
 
-class VACBuffer(ReplayBuffer):
+class ACBuffer(ReplayBuffer):
     def store_step(self, obs, act, rew, val):
         self.observations.append(obs)
         self.actions.append(act)
         self.rewards.append(rew)
         self.values.append(val)
 
-    def wrapup_episode(self, eoe_value, episode_len, discount=0.99, compromise=0.97):
+    def wrapup_episode(self, eoe_value, episode_len, discount=0.99, tradeoff=0.97):
         """
         Process raw data after an episode, calculate returns-to-go and GAE advantage estimations.
         Args:
             eoe_value: end of episode value estimation.
             episode_len: number of steps in the just-finished episode.
             discount (gamma): price of a reward in future will be penalized at present.
-            compromise (lambda): balance variance and bias of advantage estimation.
-                GAE(\gamma, \lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
-                GAE(\gamma, \lambda=1): \sum_{l=0}^{\infty} \gamma^l r+{t+1} - V(s_t)
+            tradeoff (lambda): balance variance and bias of advantage estimation.
+                GAE(lambda=0): r_t + gamma V(s_{t+1}) - V(s_t), high bias low variance
+                GAE(lambda=1): sum_{l=0}^{infty} gamma^l r+{t+1} - V(s_t), low bias high variance
         """
         next_vals = self.values[-episode_len + 1 :]
         next_vals.append(eoe_value)
@@ -44,9 +44,9 @@ class VACBuffer(ReplayBuffer):
         r_arr = jnp.array(self.rewards[-episode_len:])
         v_arr = jnp.array(self.values[-episode_len:])
         # GAE-Lambda advantage
-        td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma * V_{t+1} - V_t
+        td_errs = r_arr + discount * nv_arr - v_arr  # r_t + gamma V(s_{t+1}) - V(s_t)
         gae_advs = jnp.flip(
-            lfilter([1], [1, -discount * compromise], jnp.flip(td_errs)), axis=0
+            lfilter([1], [1, -discount * tradeoff], jnp.flip(td_errs)), axis=0
         )
         self.advantages.extend(gae_advs.tolist())
         # Discounted returns to-go
@@ -55,7 +55,7 @@ class VACBuffer(ReplayBuffer):
         self.step_returns.extend(drtg.tolist())
 
     def extract_experience(self):
-        observations_batch = jnp.array(self.observations)
+        observations_batch = jnp.array(self.observations)  # NOTE: won't work under 1D
         actions_batch = jnp.array(self.actions)
         returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
         advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
@@ -71,9 +71,9 @@ class PolicyNet(nnx.Module):
     """MLP Categorical actor"""
 
     def __init__(self, *, rngs: nnx.Rngs):
-        self.linear1 = nnx.Linear(8, 128, rngs=rngs)
-        self.linear2 = nnx.Linear(128, 128, rngs=rngs)
-        self.linear3 = nnx.Linear(128, 2, rngs=rngs)
+        self.linear1 = nnx.Linear(8, 64, rngs=rngs)
+        self.linear2 = nnx.Linear(64, 64, rngs=rngs)
+        self.linear3 = nnx.Linear(64, 2, rngs=rngs)
 
     def __call__(self, x):
         x = nnx.relu(self.linear1(x))
@@ -89,23 +89,16 @@ class ValueNet(nnx.Module):
     """MLP critic"""
 
     def __init__(self, *, rngs: nnx.Rngs):
-        self.linear1 = nnx.Linear(8, 128, rngs=rngs)
-        self.linear2 = nnx.Linear(128, 128, rngs=rngs)
-        self.linear3 = nnx.Linear(128, 1, rngs=rngs)
+        self.linear1 = nnx.Linear(8, 64, rngs=rngs)
+        self.linear2 = nnx.Linear(64, 64, rngs=rngs)
+        self.linear3 = nnx.Linear(64, 1, rngs=rngs)
 
     def __call__(self, x):
         x = nnx.relu(self.linear1(x))
         x = nnx.relu(self.linear2(x))
         v = self.linear3(x)
+
         return v
-
-
-@nnx.jit
-def make_decision(rngs: nnx.Rngs, actor: PolicyNet, critic: ValueNet, obs: np.ndarray):
-    policy = actor(obs)
-    act = policy.sample(seed=rngs)
-    val = critic(obs)
-    return act.squeeze(), val.squeeze()
 
 
 @nnx.jit
@@ -119,17 +112,20 @@ def objective_fn(actor: PolicyNet, experience_batch: ExperienceBatch):
 
 @nnx.jit
 def loss_fn(critic: ValueNet, experience_batch: ExperienceBatch):
-    vals = critic(experience_batch.obs)
-    v_loss = (vals - experience_batch.ret) ** 2
+    pred_vals = critic(experience_batch.obs)
+    targ_vals = experience_batch.ret
+    mse_loss = (pred_vals - targ_vals) ** 2  # TODO: use MSE from a lib
 
-    return v_loss.mean()
+    return mse_loss.mean()
 
 
 @nnx.jit
 def update_actor_params(actor, optimizer, experience_batch):
     grad_fn = nnx.value_and_grad(objective_fn)
-    objective, grads = grad_fn(actor, experience_batch)
+    inv_objectives, grads = grad_fn(actor, experience_batch)
     optimizer.update(grads)  # In-place updates.
+
+    return inv_objectives
 
 
 @nnx.jit
@@ -138,17 +134,30 @@ def update_critic_params(critic, optimizer, experience_batch):
     v_loss, grads = grad_fn(critic, experience_batch)
     optimizer.update(grads)  # In-place updates.
 
+    return v_loss
+
+
+@nnx.jit
+def resolve_and_assess(
+    rngs: nnx.Rngs, actor: PolicyNet, critic: ValueNet, obs: np.ndarray
+):
+    pi = actor(jnp.expand_dims(obs, axis=0))
+    act = pi.sample(seed=rngs)
+    val = critic(obs)
+
+    return act.squeeze(axis=0), val.squeeze()
+
 
 # SETUP
 env = gym.make("LunarLander-v3", continuous=True, render_mode="rgb_array")
 rngs = nnx.Rngs(25)
-buffer = VACBuffer([], [], [], [], [], [])
 actor = PolicyNet(rngs=rngs)
 critic = ValueNet(rngs=rngs)
 nnx.display(actor)
 nnx.display(critic)
 optimizer_actor = nnx.Optimizer(actor, optax.adamw(3e-4))
 optimizer_critic = nnx.Optimizer(actor, optax.adamw(1e-4))
+buffer = ACBuffer([], [], [], [], [], [])
 journal = {
     "episode_idx": 0,
     "step_idx": 0,
@@ -156,22 +165,25 @@ journal = {
     "deposit_return": [0.0],
     "averaged_return": [],
 }
-last_obs, info = env.reset()
 
-for e in range(256):
+last_obs, info = env.reset()
+for e in range(64):
     for st in range(6 * env.spec.max_episode_steps):
-        act, last_val = make_decision(rngs, actor, critic, last_obs)
-        next_obs, rew, term, trunc, info = env.step(np.array(act))
+        # Play a step
+        act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
+        next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
+        last_obs = next_obs.copy()
         buffer.store_step(last_obs, act, rew, last_val)
-        # TODO: update journal in a util function
-        journal["step_idx"] += 1
+        # Step statistics
+        journal["step_idx"] += 1  # TODO: update journal in a util function
         journal["episode_len"][-1] += 1
         journal["deposit_return"][-1] += rew
-        last_obs = next_obs.copy()
+        # Wrap up espisode
         if term or trunc:
-            eoe_val = 0.0  # end of episode value
             if trunc:
-                _, eoe_val = make_decision(rngs, actor, critic, last_obs)
+                eoe_val = jnp.squeeze(critic(last_obs))
+            else:
+                eoe_val = jnp.zeros(shape=())
             buffer.wrapup_episode(eoe_val, journal["episode_len"][-1])
             # Episode statistics
             journal["episode_idx"] += 1
@@ -187,16 +199,18 @@ for e in range(256):
             journal["episode_len"].append(0)
             journal["deposit_return"].append(0.0)
             if st > 5 * env.spec.max_episode_steps:
-                break
-    # Epoch statistics
+                break  # end epoch after sufficient data collected
+    # Wrap up epoch
+    exp_batch = buffer.extract_experience()
+    obj_inv = update_actor_params(actor, optimizer_actor, exp_batch)
+    print(f"Policy objective: {-obj_inv}")
+    for _ in range(80):
+        v_loss = update_critic_params(critic, optimizer_critic, exp_batch)
+        print(f"Value estimation loss: {v_loss}")
+    buffer = ACBuffer([], [], [], [], [], [])
     print(
         f"===\nepoch {e + 1} \n\ttotal steps: {journal['step_idx']}\n\taveraged return: {journal['averaged_return'][-1]}\n==="
     )
-    exp_batch = buffer.extract_experience()
-    update_actor_params(actor, optimizer_actor, exp_batch)
-    for _ in range(80):
-        update_critic_params(critic, optimizer_critic, exp_batch)
-    buffer = VACBuffer([], [], [], [], [], [])
 
 plt.plot(journal["averaged_return"])
 # plt.ylim(0, 200)
@@ -208,15 +222,13 @@ plt.savefig(Path(__file__).parent.joinpath("vac_continuous.png"))
 # VALIDATION
 input("Press any key to evaluate agent")
 env = gym.make("LunarLander-v3", continuous=True, render_mode="human")
-last_obs, _ = env.reset()
+obs, _ = env.reset()
 episode_return = 0.0
 term, trunc = False, False
 for _ in range(env.spec.max_episode_steps):
-    act, val = make_decision(rngs, actor, critic, last_obs)
-    next_obs, rew, term, trunc, _ = env.step(np.array(act))
+    act, _ = resolve_and_assess(rngs, actor, critic, obs)
+    obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
     episode_return += rew
-    last_obs = next_obs
     if term or trunc:
-        print(f"\n---return: {episode_return}---\n")
+        print(f"\n---Evaluation episode return: {episode_return}---\n")
         break
-env.close()
