@@ -58,7 +58,7 @@ def resolve_and_assess(rngs: nnx.Rngs, actor, critic: Critic, obs: np.ndarray):
     act = pi.sample(seed=rngs)
     val = critic(obs)
 
-    return act.squeeze(axis=-1), val.squeeze()
+    return act.squeeze(axis=0), val.squeeze()
 
 
 def learn(
@@ -179,9 +179,9 @@ def learn(
 if __name__ == "__main__":
     # TODO: argparse
     learn(
-        # env_name="CartPole-v1",
-        env_name="LunarLander-v3",
-        env_options={"continuous": True, "render_mode": "rgb_array"},
+        env_name="CartPole-v1",
+        # env_name="LunarLander-v3",
+        # env_options={"continuous": True, "render_mode": "rgb_array"},
         hidden_sizes=(128, 128),
         max_epochs=64,
         critic_update_iters=50,
