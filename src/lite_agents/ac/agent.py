@@ -118,10 +118,11 @@ def learn(
             act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
             next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
             buffer.store_step(last_obs, act, rew, last_val)
+            last_obs = next_obs.copy()
+            # Step statistics
             journal_learn["step_idx"] += 1  # TODO: update journal in a util function
             journal_learn["episode_len"][-1] += 1
             journal_learn["deposit_return"][-1] += rew
-            last_obs = next_obs.copy()
             # Wrap up episode
             if term or trunc:
                 if trunc:
@@ -131,6 +132,7 @@ def learn(
                 buffer.wrapup_episode(
                     eoe_val, journal_learn["episode_len"][-1], discount, tradeoff
                 )
+                # Episode statistics
                 journal_learn["episode_idx"] += 1
                 journal_learn["averaged_return"].append(
                     sum(journal_learn["deposit_return"])
@@ -147,17 +149,19 @@ def learn(
                 if st > min_epoch_episodes * env.spec.max_episode_steps:
                     break
         # Wrap up epoch
+        experience_batch = buffer.extract_experience()
+        obj_inv = update_actor_params(actor, actor_optimizer, experience_batch)
+        print(f"Policy objective: {-obj_inv}")
+        for _ in range(critic_update_iters):
+            v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
+            print(f"Value estimation loss: {v_loss}")
+        buffer = ACBuffer([], [], [], [], [], [])
         print(
             f"===\nepoch {e + 1} \n\ttotal steps: {journal_learn['step_idx']}\n\taveraged return: {journal_learn['averaged_return'][-1]}\n==="
         )
-        experience_batch = buffer.extract_experience()
-        update_actor_params(actor, actor_optimizer, experience_batch)
-        for _ in range(critic_update_iters):
-            update_critic_params(critic, critic_optimizer, experience_batch)
-        buffer = ACBuffer([], [], [], [], [], [])
     # TODO: need a plotter
     plt.plot(journal_learn["averaged_return"])
-    plt.grid(visible=True, axis="y")
+    plt.grid(visible=True)
     plt.show()
     # plt.savefig(Path(__file__).parent.joinpath(f"{env_name}.png"))
 
@@ -179,11 +183,11 @@ def learn(
 if __name__ == "__main__":
     # TODO: argparse
     learn(
-        env_name="CartPole-v1",
-        # env_name="LunarLander-v3",
-        # env_options={"continuous": True, "render_mode": "rgb_array"},
+        # env_name="CartPole-v1",
+        env_name="LunarLander-v3",
+        env_options={"continuous": True, "render_mode": "rgb_array"},
         hidden_sizes=(128, 128),
         max_epochs=64,
-        critic_update_iters=50,
+        critic_update_iters=80,
         eval_flag=True,
     )
