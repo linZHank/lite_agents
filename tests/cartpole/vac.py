@@ -2,6 +2,7 @@ import gymnasium as gym
 from collections import namedtuple
 from pathlib import Path
 
+from jax._src.core import Value
 import numpy as np
 import jax.numpy as jnp
 from flax import nnx
@@ -101,8 +102,8 @@ class ValueNet(nnx.Module):
 
 
 @nnx.jit
-def objective_fn(actor, experience_batch: ExperienceBatch):
-    policies = actor(experience_batch.obs)
+def objective_fn(actor_model: PolicyNet, experience_batch: ExperienceBatch):
+    policies = actor_model(experience_batch.obs)
     log_pi_as = policies.log_prob(experience_batch.act)
     objective_batch = experience_batch.adv * log_pi_as
 
@@ -110,40 +111,49 @@ def objective_fn(actor, experience_batch: ExperienceBatch):
 
 
 @nnx.jit
-def loss_fn(critic: ValueNet, experience_batch: ExperienceBatch):
-    pred_vals = critic(experience_batch.obs)
+def loss_fn(critic_model: ValueNet, experience_batch: ExperienceBatch):
+    pred_vals = critic_model(experience_batch.obs)
     targ_vals = experience_batch.ret
-    mse_loss = (pred_vals - targ_vals) ** 2  # TODO: use MSE from a lib
+    # mse_loss = (pred_vals - targ_vals) ** 2  # TODO: use MSE from a lib
+    l2_loss = optax.l2_loss(pred_vals, targ_vals)
 
-    return mse_loss.mean()
+    # return mse_loss.mean()
+    return l2_loss.mean()
 
 
 @nnx.jit
-def update_actor_params(actor: PolicyNet, optimizer_a, experience_batch):
+def update_actor_params(
+    actor_model: PolicyNet,
+    actor_optimizer: nnx.Optimizer,
+    experience_batch: ExperienceBatch,
+):
     grad_fn = nnx.value_and_grad(objective_fn)
-    inv_objectives, grads = grad_fn(actor, experience_batch)
-    optimizer_a.update(grads)  # In-place updates.
+    objective, grads = grad_fn(actor_model, experience_batch)
+    actor_optimizer.update(grads)  # In-place updates.
 
-    return inv_objectives
+    return objective
 
 
 @nnx.jit
-def update_critic_params(critic: ValueNet, optimizer_v, experience_batch):
+def update_critic_params(
+    critic_model: ValueNet,
+    critic_optimizer: nnx.Optimizer,
+    experience_batch: ExperienceBatch,
+):
     grad_fn = nnx.value_and_grad(loss_fn)
-    v_loss, grads = grad_fn(critic, experience_batch)
-    optimizer_v.update(grads)  # In-place updates.
+    v_loss, grads = grad_fn(critic_model, experience_batch)
+    critic_optimizer.update(grads)  # In-place updates.
 
     return v_loss
 
 
 @nnx.jit
-def resolve_and_assess(rngs: nnx.Rngs, actor, critic: ValueNet, obs: np.ndarray):
-    """
-    Make decision and assess value based on one step of observation
-    """
-    pi = actor(jnp.expand_dims(obs, axis=0))
+def resolve_and_assess(
+    rngs: nnx.Rngs, actor_model: PolicyNet, critic_model: ValueNet, obs: np.ndarray
+):
+    pi = actor_model(jnp.expand_dims(obs, axis=0))
     act = pi.sample(seed=rngs)
-    val = critic(obs)
+    val = critic_model(obs)
 
     return act.squeeze(axis=0), val.squeeze()
 
@@ -155,8 +165,8 @@ actor = PolicyNet(rngs=rngs)
 critic = ValueNet(rngs=rngs)
 nnx.display(actor)
 nnx.display(critic)
-optimizer_actor = nnx.Optimizer(actor, optax.adamw(3e-4))
-optimizer_critic = nnx.Optimizer(actor, optax.adamw(1e-4))
+actor_optimizer = nnx.Optimizer(actor, optax.adamw(3e-4))
+critic_optimizer = nnx.Optimizer(critic, optax.adamw(1e-4))
 buffer = ACBuffer([], [], [], [], [], [])
 journal = {
     "episode_idx": 0,
@@ -169,6 +179,7 @@ journal = {
 last_obs, info = env.reset()
 for e in range(64):
     for st in range(6 * env.spec.max_episode_steps):
+        # Play a step
         act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
         next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
         buffer.store_step(last_obs, act, rew, last_val)
@@ -177,6 +188,7 @@ for e in range(64):
         journal["step_idx"] += 1  # TODO: update journal in a util function
         journal["episode_len"][-1] += 1
         journal["deposit_return"][-1] += rew
+        # Wrap up episode
         if term or trunc:
             if trunc:
                 eoe_val = jnp.squeeze(critic(last_obs))
@@ -193,18 +205,18 @@ for e in range(64):
                 f"---\nepisode: {journal['episode_idx']}, length: {journal['episode_len'][-1]}, return: {journal['deposit_return'][-1]}\n---\n"
             )
             # Reset episode
-            last_obs, _ = env.reset()
+            last_obs, info = env.reset()
             journal["episode_len"].append(0)
             journal["deposit_return"].append(0.0)
             if st > 5 * env.spec.max_episode_steps:
-                break  # end epoch after sufficient data collected
-    # Epoch statistics
-    exp_batch = buffer.extract_experience()
-    obj_inv = update_actor_params(actor, optimizer_actor, exp_batch)
-    # print(f"Policy objective: {-obj_inv}")
+                break
+    # Wrap up epoch
+    experience_batch = buffer.extract_experience()
+    obj_inv = update_actor_params(actor, actor_optimizer, experience_batch)
+    print(f"Policy objective: {-obj_inv}")
     for _ in range(50):
-        v_loss = update_critic_params(critic, optimizer_critic, exp_batch)
-        # print(f"Value estimation loss: {v_loss}")
+        v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
+        print(f"Value estimation loss: {v_loss}")
     buffer = ACBuffer([], [], [], [], [], [])
     print(
         f"===\nepoch {e + 1} \n\ttotal steps: {journal['step_idx']}\n\taveraged return: {journal['averaged_return'][-1]}\n==="
@@ -219,15 +231,15 @@ plt.show()  # show or save
 
 
 # VALIDATION
-input("Press any key to evaluate agent")
-env = gym.make("CartPole-v1", render_mode="human")
-obs, _ = env.reset()
-episode_return = 0.0
-term, trunc = False, False
-for _ in range(env.spec.max_episode_steps):
-    act, _ = resolve_and_assess(rngs, actor, critic, obs)
-    obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
-    episode_return += rew
-    if term or trunc:
-        print(f"\n---Evaluation episode return: {episode_return}---\n")
-        break
+# input("Press any key to evaluate agent")
+# env = gym.make("CartPole-v1", render_mode="human")
+# obs, _ = env.reset()
+# episode_return = 0.0
+# term, trunc = False, False
+# for _ in range(env.spec.max_episode_steps):
+#     act, _ = resolve_and_assess(rngs, actor, critic, obs)
+#     obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+#     episode_return += rew
+#     if term or trunc:
+#         print(f"\n---Evaluation episode return: {episode_return}---\n")
+#         break
