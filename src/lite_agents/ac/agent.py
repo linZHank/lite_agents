@@ -71,7 +71,7 @@ def learn(
     seed: int = 25,
     discount: float = 0.99,
     tradeoff: float = 0.97,
-    max_epochs: int = 64,
+    max_epochs: int = 32,
     actor_lr: float = 3e-4,
     critic_lr: float = 1e-4,
     critic_update_iters=80,
@@ -119,9 +119,17 @@ def learn(
     for e in range(max_epochs):
         for st in range((min_epoch_episodes + 1) * env.spec.max_episode_steps):
             # Play a step
-            act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
-            next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
-            buffer.store_step(last_obs, act, rew, last_val)
+            # act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
+            # next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
+            pred_act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
+            act = (
+                pred_act.squeeze()
+                if isinstance(env.action_space, gym.spaces.Discrete)
+                else pred_act
+            )
+            next_obs, rew, term, trunc, info = env.step(np.array(act))
+            # buffer.store_step(last_obs, act, rew, last_val)
+            buffer.store_step(last_obs, pred_act, rew, last_val)
             last_obs = next_obs.copy()
             # Step statistics
             journal_learn["step_idx"] += 1  # TODO: update journal in a util function
@@ -153,6 +161,9 @@ def learn(
                 if st > min_epoch_episodes * env.spec.max_episode_steps:
                     break
         # Wrap up epoch
+        print(
+            f"===\nepoch {e + 1} \n\ttotal steps: {journal_learn['step_idx']}\n\taveraged return: {journal_learn['averaged_return'][-1]}\n==="
+        )
         experience_batch = buffer.extract_experience()
         obj_inv = update_actor_params(actor, actor_optimizer, experience_batch)
         # print(f"Policy objective: {-obj_inv}")  # TODO: Metrics
@@ -160,9 +171,6 @@ def learn(
             v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
             # print(f"Value estimation loss: {v_loss}")  # TODO: Metrics
         buffer = ACBuffer([], [], [], [], [], [])
-        print(
-            f"===\nepoch {e + 1} \n\ttotal steps: {journal_learn['step_idx']}\n\taveraged return: {journal_learn['averaged_return'][-1]}\n==="
-        )
     # TODO: need a plotter
     plt.plot(journal_learn["averaged_return"])
     plt.grid(visible=True)
@@ -176,8 +184,15 @@ def learn(
         obs, _ = env.reset()
         episode_return = 0.0
         for _ in range(env.spec.max_episode_steps):
-            act, _ = resolve_and_assess(rngs, actor, critic, obs)
-            obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+            # act, _ = resolve_and_assess(rngs, actor, critic, obs)
+            # obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+            pred_act, _ = resolve_and_assess(rngs, actor, critic, obs)
+            act = (
+                pred_act.squeeze()
+                if isinstance(env.action_space, gym.spaces.Discrete)
+                else pred_act
+            )
+            obs, rew, term, trunc, _ = env.step(np.array(act))
             episode_return += rew
             if term or trunc:
                 print(f"\n---return: {episode_return}---\n")
@@ -187,13 +202,13 @@ def learn(
 if __name__ == "__main__":
     # TODO: argparse
     learn(
-        # env_name="Pendulum-v1",  # TODO: fix action dimension
+        # env_name="Pendulum-v1",
         # env_name="CartPole-v1",
         env_name="LunarLander-v3",
         env_options={"continuous": True, "render_mode": "rgb_array"},
-        hidden_sizes=(128, 128),
-        max_epochs=256,
-        critic_lr=3e-4,
+        # hidden_sizes=(128, 128),
+        # max_epochs=64,
+        # critic_lr=3e-4,
         critic_update_iters=128,
         eval_flag=True,
     )
