@@ -29,9 +29,9 @@ def objective_fn(actor, experience_batch: ExperienceBatch):
 def loss_fn(critic: Critic, experience_batch: ExperienceBatch):
     pred_vals = critic(experience_batch.obs)
     targ_vals = experience_batch.ret
-    mse_loss = (pred_vals - targ_vals) ** 2  # TODO: use MSE from a lib
+    l2_loss = optax.l2_loss(pred_vals, targ_vals)
 
-    return mse_loss.mean()
+    return l2_loss.mean()
 
 
 @nnx.jit
@@ -155,10 +155,10 @@ def learn(
         # Wrap up epoch
         experience_batch = buffer.extract_experience()
         obj_inv = update_actor_params(actor, actor_optimizer, experience_batch)
-        print(f"Policy objective: {-obj_inv}")
+        # print(f"Policy objective: {-obj_inv}")  # TODO: Metrics
         for _ in range(critic_update_iters):
             v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
-            print(f"Value estimation loss: {v_loss}")
+            # print(f"Value estimation loss: {v_loss}")  # TODO: Metrics
         buffer = ACBuffer([], [], [], [], [], [])
         print(
             f"===\nepoch {e + 1} \n\ttotal steps: {journal_learn['step_idx']}\n\taveraged return: {journal_learn['averaged_return'][-1]}\n==="
@@ -187,11 +187,13 @@ def learn(
 if __name__ == "__main__":
     # TODO: argparse
     learn(
+        # env_name="Pendulum-v1",  # TODO: fix action dimension
         # env_name="CartPole-v1",
         env_name="LunarLander-v3",
         env_options={"continuous": True, "render_mode": "rgb_array"},
         hidden_sizes=(128, 128),
-        max_epochs=64,
-        critic_update_iters=80,
+        max_epochs=256,
+        critic_lr=3e-4,
+        critic_update_iters=128,
         eval_flag=True,
     )
