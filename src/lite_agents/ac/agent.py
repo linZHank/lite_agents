@@ -205,7 +205,7 @@ def learn(
             v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
             # print(f"Value estimation loss: {v_loss}")  # TODO: Metrics
         buffer = ACBuffer([], [], [], [], [], [])
-        if not (e + 1) % save_per_epoch:
+        if not (e + 1) % save_per_epoch or (e + 1) == max_epochs:
             save_models(
                 model_dir, e + 1, actor, critic, actor_checkpointer, critic_checkpointer
             )
@@ -245,9 +245,9 @@ if __name__ == "__main__":
         # env_name="LunarLander-v3",
         # env_options={"continuous": True, "render_mode": "rgb_array"},
         # hidden_sizes=(128, 128),
-        max_epochs=7,
+        max_epochs=128,
         # critic_lr=3e-4,
         # critic_update_iters=128,
         # eval_flag=True,
-        save_per_epoch=2,
+        save_per_epoch=10,
     )
