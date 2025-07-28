@@ -1,4 +1,6 @@
 from typing import Optional
+from datetime import datetime
+
 import gymnasium as gym
 import numpy as np
 import jax.numpy as jnp
@@ -11,9 +13,10 @@ from lite_agents.ac.components import (
 )
 from flax import nnx
 import optax
+import orbax.checkpoint as ocp
 
 import matplotlib.pyplot as plt
-from pathlib import Path
+from pathlib import Path, PosixPath
 
 
 @nnx.jit
@@ -70,6 +73,26 @@ def resolve_and_assess(
     return act.squeeze(axis=0), val.squeeze()
 
 
+def save_models(
+    ckpt_dir: PosixPath,
+    epoch_idx: int,
+    actor: nnx.Module,
+    critic: ValueNet,
+    actor_checkpointer: ocp.StandardCheckpointer,
+    critic_checkpointer: ocp.StandardCheckpointer,
+):
+    _, actor_state = nnx.split(actor)
+    _, critic_state = nnx.split(critic)
+    # nnx.display(actor_state)
+    # nnx.display(critic_state)
+    actor_path = ckpt_dir / f"actor/state_{epoch_idx}"
+    critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
+    actor_checkpointer.save(actor_path, actor_state)
+    critic_checkpointer.save(critic_path, critic_state)
+    print(f"Actor state saved at: {actor_path}")
+    print(f"Critic state saved at: {critic_path}")
+
+
 def learn(
     env_name: str = "CartPole-v1",
     env_options: Optional[dict] = {"render_mode": "rgb_array"},
@@ -83,6 +106,8 @@ def learn(
     hidden_sizes: tuple = (64, 64),
     min_epoch_episodes: int = 5,  # minimal episodes per epoch
     eval_flag: bool = False,
+    ckpt_dir: str = f"/tmp/spinupax/{datetime.now().strftime('%Y-%m-%d-%H-%M')}/ac/checkpoints/",
+    save_per_epoch: int = 10,
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -118,6 +143,10 @@ def learn(
         "deposit_return": [0.0],
         "averaged_return": [],
     }
+    model_dir = Path(ckpt_dir)
+    model_dir.mkdir(parents=True)
+    actor_checkpointer = ocp.StandardCheckpointer()
+    critic_checkpointer = ocp.StandardCheckpointer()
 
     # LOOP
     last_obs, info = env.reset()
@@ -176,6 +205,10 @@ def learn(
             v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
             # print(f"Value estimation loss: {v_loss}")  # TODO: Metrics
         buffer = ACBuffer([], [], [], [], [], [])
+        if not (e + 1) % save_per_epoch:
+            save_models(
+                model_dir, e + 1, actor, critic, actor_checkpointer, critic_checkpointer
+            )
     # TODO: need a plotter
     plt.plot(journal_learn["averaged_return"])
     plt.grid(visible=True)
@@ -209,11 +242,12 @@ if __name__ == "__main__":
     learn(
         # env_name="Pendulum-v1",
         # env_name="CartPole-v1",
-        env_name="LunarLander-v3",
-        env_options={"continuous": True, "render_mode": "rgb_array"},
+        # env_name="LunarLander-v3",
+        # env_options={"continuous": True, "render_mode": "rgb_array"},
         # hidden_sizes=(128, 128),
-        # max_epochs=64,
+        max_epochs=7,
         # critic_lr=3e-4,
-        critic_update_iters=128,
-        eval_flag=True,
+        # critic_update_iters=128,
+        # eval_flag=True,
+        save_per_epoch=2,
     )
