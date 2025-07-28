@@ -5,9 +5,9 @@ import jax.numpy as jnp
 from lite_agents.ac.components import (
     ACBuffer,
     ExperienceBatch,
-    CategoricalActor,
-    GaussianActor,
-    Critic,
+    CategoricalPolicyNet,
+    GaussianPolicyNet,
+    ValueNet,
 )
 from flax import nnx
 import optax
@@ -26,7 +26,7 @@ def objective_fn(actor, experience_batch: ExperienceBatch):
 
 
 @nnx.jit
-def loss_fn(critic: Critic, experience_batch: ExperienceBatch):
+def loss_fn(critic: ValueNet, experience_batch: ExperienceBatch):
     pred_vals = critic(experience_batch.obs)
     targ_vals = experience_batch.ret
     l2_loss = optax.l2_loss(pred_vals, targ_vals)
@@ -47,7 +47,7 @@ def update_actor_params(
 
 @nnx.jit
 def update_critic_params(
-    critic: Critic, critic_optimizer: nnx.Optimizer, experience_batch: ExperienceBatch
+    critic: ValueNet, critic_optimizer: nnx.Optimizer, experience_batch: ExperienceBatch
 ):
     grad_fn = nnx.value_and_grad(loss_fn)
     v_loss, grads = grad_fn(critic, experience_batch)
@@ -57,7 +57,12 @@ def update_critic_params(
 
 
 @nnx.jit
-def resolve_and_assess(rngs: nnx.Rngs, actor, critic: Critic, obs: np.ndarray):
+def resolve_and_assess(
+    rngs: nnx.Rngs,
+    actor: nnx.Module,
+    critic: ValueNet,
+    obs: np.ndarray,
+):
     pi = actor(jnp.expand_dims(obs, axis=0))
     act = pi.sample(seed=rngs)
     val = critic(obs)
@@ -83,20 +88,20 @@ def learn(
     env = gym.make(env_name, **env_options)
     rngs = nnx.Rngs(seed)
     if isinstance(env.action_space, gym.spaces.Box):
-        actor = GaussianActor(
+        actor = GaussianPolicyNet(
             rngs,
             env.observation_space.shape[0],
             env.action_space.shape[0],
             hidden_sizes,
         )
     elif isinstance(env.action_space, gym.spaces.Discrete):
-        actor = CategoricalActor(
+        actor = CategoricalPolicyNet(
             rngs,
             env.observation_space.shape[0],
             env.action_space.n,
             hidden_sizes,
         )
-    critic = Critic(
+    critic = ValueNet(
         rngs=rngs,
         observation_dims=env.observation_space.shape[0],
         hidden_sizes=hidden_sizes,

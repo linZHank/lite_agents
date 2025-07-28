@@ -85,7 +85,7 @@ class MLPNet(nnx.Module):
         )
 
 
-class CategoricalActor(MLPNet):
+class CategoricalPolicyNet(MLPNet):
     """Actor for discrete actions space"""
 
     def __init__(
@@ -112,7 +112,7 @@ class CategoricalActor(MLPNet):
         return pi
 
 
-class GaussianActor(MLPNet):
+class GaussianPolicyNet(MLPNet):
     """Actor for discrete actions space"""
 
     def __init__(
@@ -139,7 +139,7 @@ class GaussianActor(MLPNet):
         return pi
 
 
-class Critic(MLPNet):
+class ValueNet(MLPNet):
     """Critic Net"""
 
     def __init__(
