@@ -4,8 +4,6 @@ import orbax.checkpoint as ocp
 
 
 class MLPNet(nnx.Module):
-    """MLP critic"""
-
     def __init__(self, *, rngs: nnx.Rngs):
         self.linear1 = nnx.Linear(4, 32, rngs=rngs)
         self.linear2 = nnx.Linear(32, 2, rngs=rngs)
@@ -17,9 +15,9 @@ class MLPNet(nnx.Module):
 
 
 model = MLPNet(rngs=nnx.Rngs(25))
-state = nnx.split(model)
-print("Model state: ")
-nnx.display(model)
+graphdef, state = nnx.split(model)
+# print("Model state: ")
+# nnx.display(state)
 
 ckpt_path = Path(__file__).parent / "dummy_checkpoints" / "state"
 ckpt_path.parent.mkdir(parents=True, exist_ok=True)

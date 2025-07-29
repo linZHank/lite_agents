@@ -81,8 +81,8 @@ def save_models(
     actor_checkpointer: ocp.StandardCheckpointer,
     critic_checkpointer: ocp.StandardCheckpointer,
 ):
-    _, actor_state = nnx.split(actor)
-    _, critic_state = nnx.split(critic)
+    actor_graph, actor_state = nnx.split(actor)
+    critic_graph, critic_state = nnx.split(critic)
     # nnx.display(actor_state)
     # nnx.display(critic_state)
     actor_path = ckpt_dir / f"actor/state_{epoch_idx}"
@@ -91,6 +91,31 @@ def save_models(
     critic_checkpointer.save(critic_path, critic_state)
     print(f"Actor state saved at: {actor_path}")
     print(f"Critic state saved at: {critic_path}")
+
+
+def load_models(
+    ckpt_dir: PosixPath,
+    epoch_idx: int,
+    actor_graphdef,
+    critic_graphdef,
+    abstract_actor_state,
+    abstract_critic_state,
+):
+    actor_path = ckpt_dir / f"actor/state_{epoch_idx}"
+    critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
+    # actor_checkpointer = ocp.StandardCheckpointer()
+    # critic_checkpointer = ocp.StandardCheckpointer()
+    checkpointer = ocp.StandardCheckpointer()
+    restored_actor_state = checkpointer.restore(actor_path, abstract_actor_state)
+    restored_critic_state = checkpointer.restore(critic_path, abstract_critic_state)
+    print("Actor State restored: ")
+    nnx.display(restored_actor_state)
+    print("Critic State restored: ")
+    nnx.display(restored_critic_state)
+    restored_actor = nnx.merge(actor_graphdef, restored_actor_state)
+    restored_critic = nnx.merge(critic_graphdef, restored_actor_state)
+
+    return restored_actor, restored_critic
 
 
 def learn(
@@ -114,17 +139,17 @@ def learn(
     rngs = nnx.Rngs(seed)
     if isinstance(env.action_space, gym.spaces.Box):
         actor = GaussianPolicyNet(
-            rngs,
-            env.observation_space.shape[0],
-            env.action_space.shape[0],
-            hidden_sizes,
+            rngs=rngs,
+            observation_dims=env.observation_space.shape[0],
+            action_dims=env.action_space.shape[0],
+            hidden_sizes=hidden_sizes,
         )
     elif isinstance(env.action_space, gym.spaces.Discrete):
         actor = CategoricalPolicyNet(
-            rngs,
-            env.observation_space.shape[0],
-            env.action_space.n,
-            hidden_sizes,
+            rngs=rngs,
+            observation_dims=env.observation_space.shape[0],
+            action_dims=env.action_space.n,
+            hidden_sizes=hidden_sizes,
         )
     critic = ValueNet(
         rngs=rngs,
@@ -144,7 +169,7 @@ def learn(
         "averaged_return": [],
     }
     model_dir = Path(ckpt_dir)
-    model_dir.mkdir(parents=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpointer = ocp.StandardCheckpointer()
     critic_checkpointer = ocp.StandardCheckpointer()
 
@@ -249,55 +274,60 @@ def play(
     env = gym.make(env_name, **env_options)
     rngs = nnx.Rngs(seed)
     ## Load models
-    # if isinstance(env.action_space, gym.spaces.Box):
-    #     abstract_actor = nnx.eval_shape(
-    #         lambda: GaussianPolicyNet(
-    #             rngs=rngs,
-    #             observation_dims=env.observation_space.shape[0],
-    #             action_dims=env.action_space.shape[0],
-    #             hidden_sizes=hidden_sizes,
-    #         )
-    #     )
-    # elif isinstance(env.action_space, gym.spaces.Discrete):
-    #     abstract_actor = nnx.eval_shape(
-    #         lambda: CategoricalPolicyNet(
-    #             rngs,
-    #             observation_dims=env.observation_space.shape[0],
-    #             action_dims=env.action_space.n,
-    #             hidden_sizes=hidden_sizes,
-    #         )
-    #     )
-    # graphdef_a, abstract_state_a = nnx.split(abstract_actor)
-    # nnx.display(abstract_state_a)
-    abstract_critic = nnx.eval_shape(
-        lambda: ValueNet(
+    if isinstance(env.action_space, gym.spaces.Box):
+        dummy_actor = GaussianPolicyNet(
             rngs=rngs,
             observation_dims=env.observation_space.shape[0],
+            action_dims=env.action_space.shape[0],
             hidden_sizes=hidden_sizes,
         )
+    elif isinstance(env.action_space, gym.spaces.Discrete):
+        dummy_actor = CategoricalPolicyNet(
+            rngs,
+            observation_dims=env.observation_space.shape[0],
+            action_dims=env.action_space.n,
+            hidden_sizes=hidden_sizes,
+        )
+    abstract_actor = nnx.eval_shape(lambda: dummy_actor)
+    actor_graphdef, abstract_actor_state = nnx.split(abstract_actor)
+    # print("The abstract actor NNX state:")
+    # nnx.display(abstract_actor_state)
+    dummy_critic = ValueNet(
+        rngs=rngs,
+        observation_dims=env.observation_space.shape[0],
+        hidden_sizes=hidden_sizes,
     )
-    graphdef_c, abstract_state_c = nnx.split(abstract_critic)
-    print("The abstract critic NNX state:")
-    nnx.display(abstract_state_c)
+    abstract_critic = nnx.eval_shape(lambda: dummy_critic)
+    critic_graphdef, abstract_critic_state = nnx.split(abstract_critic)
+    # print("The abstract critic NNX state:")
+    # nnx.display(abstract_critic_state)
+    actor, critic = load_models(
+        Path(ckpt_dir),
+        128,
+        actor_graphdef,
+        critic_graphdef,
+        abstract_actor_state,
+        abstract_critic_state,
+    )
 
     # LOOP
-    # for _ in range(num_episodes):
-    #     obs, _ = env.reset()
-    #     episode_return = 0.0
-    #     for _ in range(env.spec.max_episode_steps):
-    #         # act, _ = resolve_and_assess(rngs, actor, critic, obs)
-    #         # obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
-    #         pred_act, _ = resolve_and_assess(rngs, actor, critic, obs)
-    #         act = (
-    #             pred_act.squeeze()
-    #             if isinstance(env.action_space, gym.spaces.Discrete)
-    #             else pred_act
-    #         )
-    #         obs, rew, term, trunc, _ = env.step(np.array(act))
-    #         episode_return += rew
-    #         if term or trunc:
-    #             print(f"\n---return: {episode_return}---\n")
-    #             break
+    for _ in range(num_episodes):
+        obs, _ = env.reset()
+        episode_return = 0.0
+        for _ in range(env.spec.max_episode_steps):
+            # act, _ = resolve_and_assess(rngs, actor, critic, obs)
+            # obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+            pred_act, _ = resolve_and_assess(rngs, actor, critic, obs)
+            act = (
+                pred_act.squeeze()
+                if isinstance(env.action_space, gym.spaces.Discrete)
+                else pred_act
+            )
+            obs, rew, term, trunc, _ = env.step(np.array(act))
+            episode_return += rew
+            if term or trunc:
+                print(f"\n---return: {episode_return}---\n")
+                break
 
 
 if __name__ == "__main__":
@@ -311,7 +341,14 @@ if __name__ == "__main__":
     #     max_epochs=128,
     #     # critic_lr=3e-4,
     #     # critic_update_iters=128,
-    #     # eval_flag=True,
+    #     eval_flag=True,
     #     save_per_epoch=10,
     # )
-    play()
+    play(
+        # env_name="CartPole-v1",
+        env_options={"render_mode": "human"},
+        # seed=25,
+        # hidden_sizes=(128, 128),
+        num_episodes=1,
+        ckpt_dir="/tmp/spinupax/ac/checkpoints/",
+    )

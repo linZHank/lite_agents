@@ -146,13 +146,12 @@ class ValueNet(MLPNet):
         self,
         rngs: nnx.Rngs,
         observation_dims: int,
-        value_dims: int = 1,
         hidden_sizes: tuple = (64, 64),
     ):
         super().__init__(
             rngs=rngs,
             input_dims=observation_dims,
-            output_dims=value_dims,
+            output_dims=1,
             hidden_sizes=hidden_sizes,
         )
 
