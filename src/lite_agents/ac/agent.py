@@ -1,9 +1,13 @@
+from pathlib import Path, PosixPath
 from typing import Optional
-from datetime import datetime
 
 import gymnasium as gym
 import numpy as np
 import jax.numpy as jnp
+from flax import nnx
+import optax
+import orbax.checkpoint as ocp
+
 from lite_agents.ac.components import (
     ACBuffer,
     ExperienceBatch,
@@ -11,12 +15,8 @@ from lite_agents.ac.components import (
     GaussianPolicyNet,
     ValueNet,
 )
-from flax import nnx
-import optax
-import orbax.checkpoint as ocp
 
 import matplotlib.pyplot as plt
-from pathlib import Path, PosixPath
 
 
 @nnx.jit
@@ -106,7 +106,7 @@ def learn(
     hidden_sizes: tuple = (64, 64),
     min_epoch_episodes: int = 5,  # minimal episodes per epoch
     eval_flag: bool = False,
-    ckpt_dir: str = f"/tmp/spinupax/{datetime.now().strftime('%Y-%m-%d-%H-%M')}/ac/checkpoints/",
+    ckpt_dir: str = "/tmp/spinupax/ac/checkpoints/",
     save_per_epoch: int = 10,
 ):
     # SETUP
@@ -237,17 +237,81 @@ def learn(
                 break
 
 
+def play(
+    env_name: str = "CartPole-v1",
+    env_options: Optional[dict] = {"render_mode": "rgb_array"},
+    seed: int = 25,
+    hidden_sizes: tuple = (64, 64),
+    num_episodes: int = 1,  # minimal episodes per epoch
+    ckpt_dir: str = "/tmp/spinupax/ac/checkpoints/",
+):
+    # SETUP
+    env = gym.make(env_name, **env_options)
+    rngs = nnx.Rngs(seed)
+    ## Load models
+    # if isinstance(env.action_space, gym.spaces.Box):
+    #     abstract_actor = nnx.eval_shape(
+    #         lambda: GaussianPolicyNet(
+    #             rngs=rngs,
+    #             observation_dims=env.observation_space.shape[0],
+    #             action_dims=env.action_space.shape[0],
+    #             hidden_sizes=hidden_sizes,
+    #         )
+    #     )
+    # elif isinstance(env.action_space, gym.spaces.Discrete):
+    #     abstract_actor = nnx.eval_shape(
+    #         lambda: CategoricalPolicyNet(
+    #             rngs,
+    #             observation_dims=env.observation_space.shape[0],
+    #             action_dims=env.action_space.n,
+    #             hidden_sizes=hidden_sizes,
+    #         )
+    #     )
+    # graphdef_a, abstract_state_a = nnx.split(abstract_actor)
+    # nnx.display(abstract_state_a)
+    abstract_critic = nnx.eval_shape(
+        lambda: ValueNet(
+            rngs=rngs,
+            observation_dims=env.observation_space.shape[0],
+            hidden_sizes=hidden_sizes,
+        )
+    )
+    graphdef_c, abstract_state_c = nnx.split(abstract_critic)
+    print("The abstract critic NNX state:")
+    nnx.display(abstract_state_c)
+
+    # LOOP
+    # for _ in range(num_episodes):
+    #     obs, _ = env.reset()
+    #     episode_return = 0.0
+    #     for _ in range(env.spec.max_episode_steps):
+    #         # act, _ = resolve_and_assess(rngs, actor, critic, obs)
+    #         # obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
+    #         pred_act, _ = resolve_and_assess(rngs, actor, critic, obs)
+    #         act = (
+    #             pred_act.squeeze()
+    #             if isinstance(env.action_space, gym.spaces.Discrete)
+    #             else pred_act
+    #         )
+    #         obs, rew, term, trunc, _ = env.step(np.array(act))
+    #         episode_return += rew
+    #         if term or trunc:
+    #             print(f"\n---return: {episode_return}---\n")
+    #             break
+
+
 if __name__ == "__main__":
     # TODO: argparse
-    learn(
-        # env_name="Pendulum-v1",
-        # env_name="CartPole-v1",
-        # env_name="LunarLander-v3",
-        # env_options={"continuous": True, "render_mode": "rgb_array"},
-        # hidden_sizes=(128, 128),
-        max_epochs=128,
-        # critic_lr=3e-4,
-        # critic_update_iters=128,
-        # eval_flag=True,
-        save_per_epoch=10,
-    )
+    # learn(
+    #     # env_name="Pendulum-v1",
+    #     # env_name="CartPole-v1",
+    #     # env_name="LunarLander-v3",
+    #     # env_options={"continuous": True, "render_mode": "rgb_array"},
+    #     # hidden_sizes=(128, 128),
+    #     max_epochs=128,
+    #     # critic_lr=3e-4,
+    #     # critic_update_iters=128,
+    #     # eval_flag=True,
+    #     save_per_epoch=10,
+    # )
+    play()
