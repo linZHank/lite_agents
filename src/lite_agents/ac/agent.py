@@ -78,17 +78,16 @@ def save_models(
     epoch_idx: int,
     actor: nnx.Module,
     critic: ValueNet,
-    actor_checkpointer: ocp.StandardCheckpointer,
-    critic_checkpointer: ocp.StandardCheckpointer,
+    checkpointer: ocp.StandardCheckpointer,
 ):
-    actor_graph, actor_state = nnx.split(actor)
-    critic_graph, critic_state = nnx.split(critic)
+    _, actor_state = nnx.split(actor)
+    _, critic_state = nnx.split(critic)
     # nnx.display(actor_state)
     # nnx.display(critic_state)
     actor_path = ckpt_dir / f"actor/state_{epoch_idx}"
     critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
-    actor_checkpointer.save(actor_path, actor_state)
-    critic_checkpointer.save(critic_path, critic_state)
+    checkpointer.save(actor_path, actor_state)
+    checkpointer.save(critic_path, critic_state)
     print(f"Actor state saved at: {actor_path}")
     print(f"Critic state saved at: {critic_path}")
 
@@ -103,8 +102,6 @@ def load_models(
 ):
     actor_path = ckpt_dir / f"actor/state_{epoch_idx}"
     critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
-    # actor_checkpointer = ocp.StandardCheckpointer()
-    # critic_checkpointer = ocp.StandardCheckpointer()
     checkpointer = ocp.StandardCheckpointer()
     restored_actor_state = checkpointer.restore(actor_path, abstract_actor_state)
     restored_critic_state = checkpointer.restore(critic_path, abstract_critic_state)
@@ -131,7 +128,7 @@ def learn(
     hidden_sizes: tuple = (64, 64),
     min_epoch_episodes: int = 5,  # minimal episodes per epoch
     eval_flag: bool = False,
-    ckpt_dir: str = "/tmp/spinupax/ac/checkpoints/",
+    ckpt_dir: PosixPath = Path("/tmp/spinupax/ac/checkpoints/"),
     save_per_epoch: int = 10,
 ):
     # SETUP
@@ -168,18 +165,14 @@ def learn(
         "deposit_return": [0.0],
         "averaged_return": [],
     }
-    model_dir = Path(ckpt_dir)
-    model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpointer = ocp.StandardCheckpointer()
-    critic_checkpointer = ocp.StandardCheckpointer()
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    checkpointer = ocp.StandardCheckpointer()
 
     # LOOP
     last_obs, info = env.reset()
     for e in range(max_epochs):
         for st in range((min_epoch_episodes + 1) * env.spec.max_episode_steps):
             # Play a step
-            # act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
-            # next_obs, rew, term, trunc, info = env.step(np.array(act.squeeze()))
             pred_act, last_val = resolve_and_assess(rngs, actor, critic, last_obs)
             act = (
                 pred_act.squeeze()
@@ -232,7 +225,11 @@ def learn(
         buffer = ACBuffer([], [], [], [], [], [])
         if not (e + 1) % save_per_epoch or (e + 1) == max_epochs:
             save_models(
-                model_dir, e + 1, actor, critic, actor_checkpointer, critic_checkpointer
+                ckpt_dir,
+                e + 1,
+                actor,
+                critic,
+                checkpointer,
             )
     # TODO: need a plotter
     plt.plot(journal_learn["averaged_return"])
@@ -247,8 +244,6 @@ def learn(
         obs, _ = env.reset()
         episode_return = 0.0
         for _ in range(env.spec.max_episode_steps):
-            # act, _ = resolve_and_assess(rngs, actor, critic, obs)
-            # obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
             pred_act, _ = resolve_and_assess(rngs, actor, critic, obs)
             act = (
                 pred_act.squeeze()
@@ -268,7 +263,7 @@ def play(
     seed: int = 25,
     hidden_sizes: tuple = (64, 64),
     num_episodes: int = 1,  # minimal episodes per epoch
-    ckpt_dir: str = "/tmp/spinupax/ac/checkpoints/",
+    ckpt_dir: PosixPath = Path("/tmp/spinupax/ac/checkpoints/"),
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -302,7 +297,7 @@ def play(
     # print("The abstract critic NNX state:")
     # nnx.display(abstract_critic_state)
     actor, critic = load_models(
-        Path(ckpt_dir),
+        ckpt_dir,
         128,
         actor_graphdef,
         critic_graphdef,
@@ -315,8 +310,6 @@ def play(
         obs, _ = env.reset()
         episode_return = 0.0
         for _ in range(env.spec.max_episode_steps):
-            # act, _ = resolve_and_assess(rngs, actor, critic, obs)
-            # obs, rew, term, trunc, _ = env.step(np.array(act.squeeze()))
             pred_act, _ = resolve_and_assess(rngs, actor, critic, obs)
             act = (
                 pred_act.squeeze()
@@ -349,6 +342,6 @@ if __name__ == "__main__":
         env_options={"render_mode": "human"},
         # seed=25,
         # hidden_sizes=(128, 128),
-        num_episodes=1,
-        ckpt_dir="/tmp/spinupax/ac/checkpoints/",
+        num_episodes=5,
+        ckpt_dir=Path("/tmp/spinupax/ac/checkpoints/"),
     )
