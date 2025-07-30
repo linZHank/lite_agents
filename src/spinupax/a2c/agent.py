@@ -8,7 +8,7 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-from lite_agents.a2c.components import (
+from spinupax.a2c.components import (
     A2CBuffer,
     ExperienceBatch,
     CategoricalPolicyNet,
@@ -255,11 +255,12 @@ def learn(
 
 def play(
     env_name: str = "CartPole-v1",
-    env_options: Optional[dict] = {"render_mode": "rgb_array"},
+    env_options: Optional[dict] = {"render_mode": "human"},
     seed: int = 25,
     hidden_sizes: tuple = (64, 64),
     num_episodes: int = 1,  # minimal episodes per epoch
     ckpt_dir: PosixPath = Path("/tmp/spinupax/a2c/checkpoints/"),
+    state_id: int = 32,
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -290,7 +291,7 @@ def play(
     critic_graphdef, abstract_critic_state = nnx.split(abstract_critic)
     actor, critic = load_models(
         ckpt_dir,
-        128,
+        state_id,
         actor_graphdef,
         critic_graphdef,
         abstract_actor_state,
@@ -317,27 +318,27 @@ def play(
 
 if __name__ == "__main__":
     # TODO: argparse
-    learn(
-        # env_name="CartPole-v1",
-        # env_options={"render_mode": "rgb_array"},
-        # seed=25,
-        # discount=0.99,
-        # tradeoff=0.97,
-        # max_epochs=32,
-        # actor_lr=3e-4,
-        # critic_lr=1e-4,
-        # critic_update_iters=80,
-        # hidden_sizes=(64, 64),
-        # min_epoch_episodes=5,  # minimal episodes per epoch
-        # eval_flag=False,
-        # ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
-        # save_per_epoch=10,
-    )
-    # play(
-    #     env_name="CartPole-v1",
-    #     env_options={"render_mode": "rgb_array"},
-    #     seed=25,
-    #     hidden_sizes=(64, 64),
-    #     num_episodes=1,  # minimal episodes per epoch
-    #     ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
+    # learn(
+    # env_name="CartPole-v1",
+    # env_options={"render_mode": "rgb_array"},
+    # seed=25,
+    # discount=0.99,
+    # tradeoff=0.97,
+    # max_epochs=32,
+    # actor_lr=3e-4,
+    # critic_lr=1e-4,
+    # critic_update_iters=80,
+    # hidden_sizes=(64, 64),
+    # min_epoch_episodes=5,  # minimal episodes per epoch
+    # eval_flag=False,
+    # ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
+    # save_per_epoch=10,
     # )
+    play(
+        #     env_name="CartPole-v1",
+        #     env_options={"render_mode": "rgb_array"},
+        #     seed=25,
+        #     hidden_sizes=(64, 64),
+        #     num_episodes=1,  # minimal episodes per epoch
+        #     ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
+    )
