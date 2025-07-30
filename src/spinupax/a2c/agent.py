@@ -8,8 +8,8 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-from lite_agents.ac.components import (
-    ACBuffer,
+from lite_agents.a2c.components import (
+    A2CBuffer,
     ExperienceBatch,
     CategoricalPolicyNet,
     GaussianPolicyNet,
@@ -126,7 +126,7 @@ def learn(
     hidden_sizes: tuple = (64, 64),
     min_epoch_episodes: int = 5,  # minimal episodes per epoch
     eval_flag: bool = False,
-    ckpt_dir: PosixPath = Path("/tmp/spinupax/ac/checkpoints/"),
+    ckpt_dir: PosixPath = Path("/tmp/spinupax/a2c/checkpoints/"),
     save_per_epoch: int = 10,
 ):
     # SETUP
@@ -153,7 +153,7 @@ def learn(
     )
     actor_optimizer = nnx.Optimizer(actor, optax.adamw(actor_lr))
     critic_optimizer = nnx.Optimizer(critic, optax.adamw(critic_lr))
-    buffer = ACBuffer([], [], [], [], [], [])
+    buffer = A2CBuffer([], [], [], [], [], [])
     journal_learn = {
         "episode_idx": 0,
         "step_idx": 0,
@@ -218,7 +218,7 @@ def learn(
         for _ in range(critic_update_iters):
             v_loss = update_critic_params(critic, critic_optimizer, experience_batch)
             # print(f"Value estimation loss: {v_loss}")  # TODO: Metrics
-        buffer = ACBuffer([], [], [], [], [], [])
+        buffer = A2CBuffer([], [], [], [], [], [])
         if not (e + 1) % save_per_epoch or (e + 1) == max_epochs:
             save_models(
                 ckpt_dir,
@@ -259,7 +259,7 @@ def play(
     seed: int = 25,
     hidden_sizes: tuple = (64, 64),
     num_episodes: int = 1,  # minimal episodes per epoch
-    ckpt_dir: PosixPath = Path("/tmp/spinupax/ac/checkpoints/"),
+    ckpt_dir: PosixPath = Path("/tmp/spinupax/a2c/checkpoints/"),
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -330,7 +330,7 @@ if __name__ == "__main__":
         # hidden_sizes=(64, 64),
         # min_epoch_episodes=5,  # minimal episodes per epoch
         # eval_flag=False,
-        # ckpt_dir=Path("/tmp/spinupax/ac/checkpoints/"),
+        # ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
         # save_per_epoch=10,
     )
     # play(
@@ -339,5 +339,5 @@ if __name__ == "__main__":
     #     seed=25,
     #     hidden_sizes=(64, 64),
     #     num_episodes=1,  # minimal episodes per epoch
-    #     ckpt_dir=Path("/tmp/spinupax/ac/checkpoints/"),
+    #     ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
     # )

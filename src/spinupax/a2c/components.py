@@ -15,7 +15,7 @@ ReplayBuffer = namedtuple(
 ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret adv")
 
 
-class ACBuffer(ReplayBuffer):
+class A2CBuffer(ReplayBuffer):
     def store_step(self, obs, act, rew, val):
         self.observations.append(obs)
         self.actions.append(act)
