@@ -82,8 +82,6 @@ def save_models(
 ):
     _, actor_state = nnx.split(actor)
     _, critic_state = nnx.split(critic)
-    # nnx.display(actor_state)
-    # nnx.display(critic_state)
     actor_path = ckpt_dir / f"actor/state_{epoch_idx}"
     critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
     checkpointer.save(actor_path, actor_state)
@@ -153,8 +151,6 @@ def learn(
         observation_dims=env.observation_space.shape[0],
         hidden_sizes=hidden_sizes,
     )
-    nnx.display(actor)
-    nnx.display(critic)
     actor_optimizer = nnx.Optimizer(actor, optax.adamw(actor_lr))
     critic_optimizer = nnx.Optimizer(critic, optax.adamw(critic_lr))
     buffer = ACBuffer([], [], [], [], [], [])
@@ -285,8 +281,6 @@ def play(
         )
     abstract_actor = nnx.eval_shape(lambda: dummy_actor)
     actor_graphdef, abstract_actor_state = nnx.split(abstract_actor)
-    # print("The abstract actor NNX state:")
-    # nnx.display(abstract_actor_state)
     dummy_critic = ValueNet(
         rngs=rngs,
         observation_dims=env.observation_space.shape[0],
@@ -294,8 +288,6 @@ def play(
     )
     abstract_critic = nnx.eval_shape(lambda: dummy_critic)
     critic_graphdef, abstract_critic_state = nnx.split(abstract_critic)
-    # print("The abstract critic NNX state:")
-    # nnx.display(abstract_critic_state)
     actor, critic = load_models(
         ckpt_dir,
         128,
@@ -325,23 +317,27 @@ def play(
 
 if __name__ == "__main__":
     # TODO: argparse
-    # learn(
-    #     # env_name="Pendulum-v1",
-    #     # env_name="CartPole-v1",
-    #     # env_name="LunarLander-v3",
-    #     # env_options={"continuous": True, "render_mode": "rgb_array"},
-    #     # hidden_sizes=(128, 128),
-    #     max_epochs=128,
-    #     # critic_lr=3e-4,
-    #     # critic_update_iters=128,
-    #     eval_flag=True,
-    #     save_per_epoch=10,
-    # )
-    play(
+    learn(
         # env_name="CartPole-v1",
-        env_options={"render_mode": "human"},
+        # env_options={"render_mode": "rgb_array"},
         # seed=25,
-        # hidden_sizes=(128, 128),
-        num_episodes=5,
-        ckpt_dir=Path("/tmp/spinupax/ac/checkpoints/"),
+        # discount=0.99,
+        # tradeoff=0.97,
+        # max_epochs=32,
+        # actor_lr=3e-4,
+        # critic_lr=1e-4,
+        # critic_update_iters=80,
+        # hidden_sizes=(64, 64),
+        # min_epoch_episodes=5,  # minimal episodes per epoch
+        # eval_flag=False,
+        # ckpt_dir=Path("/tmp/spinupax/ac/checkpoints/"),
+        # save_per_epoch=10,
     )
+    # play(
+    #     env_name="CartPole-v1",
+    #     env_options={"render_mode": "rgb_array"},
+    #     seed=25,
+    #     hidden_sizes=(64, 64),
+    #     num_episodes=1,  # minimal episodes per epoch
+    #     ckpt_dir=Path("/tmp/spinupax/ac/checkpoints/"),
+    # )
