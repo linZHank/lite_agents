@@ -1,9 +1,9 @@
 [project]
-name = "lite-agents"
+name = "spinupax"
 version = "0.1.0"
-description = "Add your description here"
+description = "Packs of RL agents"
 readme = "README.md"
-authors = [{ name = "linzhanguca", email = "lzhang12@uca.edu" }]
+authors = [{ name = "linzhank", email = "linzhank@gmail.com" }]
 requires-python = ">=3.13"
 dependencies = [
   "flax>=0.10.7",
@@ -24,6 +24,4 @@ dev = [
   "pyqt6>=6.9.1",
   "swig>=4.3.1",
 ]
-gpu = [
-    "jax[cuda12]==0.6.2",
-]
+gpu = ["jax[cuda12]==0.6.2"]

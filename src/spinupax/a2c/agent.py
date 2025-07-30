@@ -335,10 +335,11 @@ if __name__ == "__main__":
     # save_per_epoch=10,
     # )
     play(
-        #     env_name="CartPole-v1",
-        #     env_options={"render_mode": "rgb_array"},
-        #     seed=25,
-        #     hidden_sizes=(64, 64),
-        #     num_episodes=1,  # minimal episodes per epoch
-        #     ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
+        # env_name="CartPole-v1",
+        # env_options={"render_mode": "rgb_array"},
+        # seed=25,
+        # hidden_sizes=(64, 64),
+        # num_episodes=1,  # minimal episodes per epoch
+        # ckpt_dir=Path("/tmp/spinupax/a2c/checkpoints/"),
+        # load_epoch_idx=32,
     )
