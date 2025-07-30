@@ -260,7 +260,7 @@ def play(
     hidden_sizes: tuple = (64, 64),
     num_episodes: int = 1,  # minimal episodes per epoch
     ckpt_dir: PosixPath = Path("/tmp/spinupax/a2c/checkpoints/"),
-    state_id: int = 32,
+    load_epoch_idx: int = 32,
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -291,7 +291,7 @@ def play(
     critic_graphdef, abstract_critic_state = nnx.split(abstract_critic)
     actor, critic = load_models(
         ckpt_dir,
-        state_id,
+        load_epoch_idx,
         actor_graphdef,
         critic_graphdef,
         abstract_actor_state,
