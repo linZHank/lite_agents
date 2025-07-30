@@ -9,17 +9,18 @@ from scipy.signal import lfilter
 
 ReplayBuffer = namedtuple(
     "ReplayBuffer",
-    "observations actions rewards values step_returns advantages",
+    "observations actions rewards values step_returns advantages, log_probas",
 )
-ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret adv")
+ExperienceBatch = namedtuple("ExperienceBatch", "obs act ret adv logp")
 
 
 class PPOBuffer(ReplayBuffer):
-    def store_step(self, obs, act, rew, val):
-        self.observations.append(obs)
-        self.actions.append(act)
-        self.rewards.append(rew)
-        self.values.append(val)
+    def store_step(self, obs, act, rew, val, logp):
+        self.observations.append(obs)  # observation
+        self.actions.append(act)  # action
+        self.rewards.append(rew)  # reward
+        self.values.append(val)  # value
+        self.log_probas.append(logp)  # log probability of action
 
     def wrapup_episode(self, eoe_value, episode_len, discount=0.99, tradeoff=0.97):
         """
@@ -53,9 +54,14 @@ class PPOBuffer(ReplayBuffer):
         actions_batch = jnp.array(self.actions)
         returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
         advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
+        log_probas_batch = jnp.array(self.log_probas)
 
         experience_batch = ExperienceBatch(
-            observations_batch, actions_batch, returns_batch, advantages_batch
+            observations_batch,
+            actions_batch,
+            returns_batch,
+            advantages_batch,
+            log_probas_batch,
         )
 
         return experience_batch
