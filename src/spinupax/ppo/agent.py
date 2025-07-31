@@ -336,31 +336,30 @@ def play(
 
 if __name__ == "__main__":
     # TODO: argparse
-    # learn(
-    #     # env_name="CartPole-v1",
-    #     # env_options={"render_mode": "rgb_array"},
-    #     # seed=25,
-    #     # discount=0.99,
-    #     # tradeoff=0.97,
-    #     # max_epochs=32,
-    #     # actor_lr=3e-4,
-    #     # critic_lr=1e-4,
-    #     # clip_constant=0.2,
-    #     # actor_update_iters=16,
-    #     # critic_update_iters=128,
-    #     # hidden_sizes=(64, 64),
-    #     # min_epoch_episodes=5,  # minimal episodes per epoch
-    #     # eval_flag=False,
-    #     # ckpt_dir=Path("/tmp/cartpole/spinupax/a2c/checkpoints/"),
-    #     # save_per_epoch=10,
-    # )
-    play(
+    learn(
         # env_name="CartPole-v1",
         # env_options={"render_mode": "rgb_array"},
         # seed=25,
+        # discount=0.99,
+        # tradeoff=0.97,
+        # max_epochs=32,
+        # actor_lr=3e-4,
+        # critic_lr=1e-4,
+        # clip_constant=0.2,
+        # actor_update_iters=16,
+        # critic_update_iters=128,
         # hidden_sizes=(64, 64),
-        # num_episodes=1,  # minimal episodes per epoch
+        # min_epoch_episodes=5,  # minimal episodes per epoch
+        # eval_flag=False,
         # ckpt_dir=Path("/tmp/cartpole/spinupax/a2c/checkpoints/"),
-        # load_epoch_idx=32,
-        ckpt_dir=Path("/tmp/cartpole/spinupax/ppo/checkpoints/"),
+        # save_per_epoch=10,
     )
+    # play(
+    #     # env_name="CartPole-v1",
+    #     # env_options={"render_mode": "rgb_array"},
+    #     # seed=25,
+    #     # hidden_sizes=(64, 64),
+    #     # num_episodes=1,  # minimal episodes per epoch
+    #     # ckpt_dir=Path("/tmp/cartpole/spinupax/a2c/checkpoints/"),
+    #     # load_epoch_idx=32,
+    # )
