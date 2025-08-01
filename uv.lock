@@ -397,49 +397,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lite-agents"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "flax" },
-    { name = "orbax-checkpoint" },
-    { name = "tensorflow-probability" },
-]
-
-[package.dev-dependencies]
-cpu = [
-    { name = "jax" },
-]
-dev = [
-    { name = "gymnasium", extra = ["box2d"] },
-    { name = "matplotlib" },
-    { name = "pygame" },
-    { name = "pyqt6" },
-    { name = "swig" },
-]
-gpu = [
-    { name = "jax", extra = ["cuda12"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "flax", specifier = ">=0.10.7" },
-    { name = "orbax-checkpoint", specifier = ">=0.11.19" },
-    { name = "tensorflow-probability", specifier = ">=0.25.0" },
-]
-
-[package.metadata.requires-dev]
-cpu = [{ name = "jax", specifier = ">=0.6.2" }]
-dev = [
-    { name = "gymnasium", extras = ["box2d"], specifier = ">=1.2.0" },
-    { name = "matplotlib", specifier = ">=3.10.3" },
-    { name = "pygame", specifier = ">=2.6.1" },
-    { name = "pyqt6", specifier = ">=6.9.1" },
-    { name = "swig", specifier = ">=4.3.1" },
-]
-gpu = [{ name = "jax", extras = ["cuda12"], specifier = "==0.6.2" }]
-
-[[package]]
 name = "markdown-it-py"
 version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1051,6 +1008,49 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
+
+[[package]]
+name = "spinupax"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "flax" },
+    { name = "orbax-checkpoint" },
+    { name = "tensorflow-probability" },
+]
+
+[package.dev-dependencies]
+cpu = [
+    { name = "jax" },
+]
+dev = [
+    { name = "gymnasium", extra = ["box2d"] },
+    { name = "matplotlib" },
+    { name = "pygame" },
+    { name = "pyqt6" },
+    { name = "swig" },
+]
+gpu = [
+    { name = "jax", extra = ["cuda12"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "flax", specifier = ">=0.10.7" },
+    { name = "orbax-checkpoint", specifier = ">=0.11.19" },
+    { name = "tensorflow-probability", specifier = ">=0.25.0" },
+]
+
+[package.metadata.requires-dev]
+cpu = [{ name = "jax", specifier = ">=0.6.2" }]
+dev = [
+    { name = "gymnasium", extras = ["box2d"], specifier = ">=1.2.0" },
+    { name = "matplotlib", specifier = ">=3.10.3" },
+    { name = "pygame", specifier = ">=2.6.1" },
+    { name = "pyqt6", specifier = ">=6.9.1" },
+    { name = "swig", specifier = ">=4.3.1" },
+]
+gpu = [{ name = "jax", extras = ["cuda12"], specifier = "==0.6.2" }]
 
 [[package]]
 name = "swig"
