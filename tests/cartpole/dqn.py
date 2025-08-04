@@ -1,6 +1,10 @@
 import gymnasium as gym
+import numpy as np
 
+import jax
 from flax import nnx
+
+from tensorflow_probability.substrates.jax.distributions import Categorical
 
 
 # SETUP
@@ -20,15 +24,28 @@ class QValueNet(nnx.Module):
         return q
 
 
+uniform_distribution = Categorical(probs=[[0.5, 0.5]])
+
+
+@nnx.jit
 def resolve_and_assess(rngs, critic, explore_epsilon, obs):
     # pred_act, q_val = resolve_and_assess(rngs, explore_epsilon, critic, last_obs)
     q_value = critic(obs)
     greedy_action = q_value.argmax(axis=-1)
-    #
-    return q_value, greedy_action
+    sampled_action = jax.random.randint(key=rngs.params(), shape=(), minval=0, maxval=2)
+    selector = jax.random.uniform(key=rngs.params())
+    action = jax.lax.select(
+        pred=selector > explore_epsilon,
+        on_true=greedy_action,
+        on_false=sampled_action,
+    )
+
+    return action, q_value
 
 
 rngs = nnx.Rngs(25)
+qnet = QValueNet(rngs=rngs)
+explore_epsilon = 0.5
 journal_learn = {
     "episode_idx": 0,
     "step_idx": 0,
@@ -41,12 +58,12 @@ journal_learn = {
 # LOOP
 env = gym.make("CartPole-v1", render_mode="rgb_array")
 last_obs, info = env.reset()
-for st in range(1000 * env.spec.max_episode_steps):
+for st in range(5 * env.spec.max_episode_steps):
     # Play a step
-    # pred_act, q_val = resolve_and_assess(rngs, explore_epsilon, critic, last_obs)
+    pred_act, q_val = resolve_and_assess(rngs, qnet, explore_epsilon, last_obs)
     act = pred_act.squeeze()
     next_obs, rew, term, trunc, info = env.step(np.array(act))
-    buffer.store_step(last_obs, pred_act, rew, term, next_obs)
+    # buffer.store_step(last_obs, pred_act, rew, term, next_obs)
     last_obs = next_obs.copy()
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
