@@ -1,10 +1,56 @@
+from collections import namedtuple
 import gymnasium as gym
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from flax import nnx
 
-from tensorflow_probability.substrates.jax.distributions import Categorical
+ExperienceBatch = namedtuple(
+    "ExperienceBatch", "last_observation action reward discount next_observation"
+)
+
+
+class DQNBuffer:
+    def __init__(
+        self,
+        loc: int = 0,
+        max_cap: int = int(1e6),
+        obs_dims: int = 4,
+        discount: float = 0.99,
+    ):
+        self.lobs_buf = np.zeros((max_cap, obs_dims))
+        self.act_buf = np.zeros((max_cap, 1))
+        self.rew_buf = np.zeros((max_cap, 1))
+        self.adjdisc_buf = np.zeros((max_cap, 1))
+        self.nobs_buf = np.zeros_like(self.lobs_buf)
+        self.loc = loc
+        self.discount = discount
+
+    def store_step(self, last_obs, act, rew, term, next_obs):
+        self.lobs_buf[self.loc] = last_obs
+        self.act_buf[self.loc] = act
+        self.rew_buf[self.loc] = rew
+        self.adjdisc_buf[self.loc] = (1 - term) * self.discount
+        self.nobs_buf[self.loc] = next_obs
+
+    def extract_experience(self, batch_size, discount=0.98):
+        shuffled_ids = np.random.randint(low=0, high=self.capacity, size=(batch_size,))
+        observations_batch = jnp.array(self.observations)  # NOTE: won't work under 1D
+        actions_batch = jnp.array(self.actions)
+        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
+        advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
+        log_probas_batch = jnp.array(self.log_probas)
+
+        experience_batch = ExperienceBatch(
+            last_observation_samples,
+            action_samples,
+            reward_samples,
+            discount_samples,
+            next_observation_samples,
+        )
+
+        return experience_batch
 
 
 # SETUP
@@ -22,9 +68,6 @@ class QValueNet(nnx.Module):
         q = self.linear3(x)
 
         return q
-
-
-uniform_distribution = Categorical(probs=[[0.5, 0.5]])
 
 
 @nnx.jit
