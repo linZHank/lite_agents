@@ -150,7 +150,7 @@ for st in range(5 * env.spec.max_episode_steps):
     last_obs = next_obs.copy()
     if journal_learn["episode_idx"] + 1 > warmup_episodes:
         experience_batch = buffer.extract_experience(rngs, 1024)
-        qloss = loss_fn(qnet_online, qnet_stable, experience_batch)
+        qloss = online_update_fn(qnet_online, qnet_stable, optimizer, experience_batch)
         print(f"q value loss: {qloss}")
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
