@@ -106,6 +106,16 @@ def online_update_fn(critic_online, critic_stable, optimizer, experience_batch):
     return loss_val
 
 
+def polyak_update(critic_online, critic_stable):
+    _, state_online = nnx.split(critic_online)
+    graph_def, state_stable = nnx.split(critic_stable)
+    state_update = optax.incremental_update(
+        new_tensors=state_online, old_tensors=state_stable, step_size=0.01
+    )
+    critic_stable = nnx.merge(graph_def, state_update)
+    return critic_stable
+
+
 @nnx.jit
 def resolve_and_assess(rngs, critic, explore_epsilon, obs):
     # pred_act, q_val = resolve_and_assess(rngs, explore_epsilon, critic, last_obs)
@@ -151,7 +161,8 @@ for st in range(5 * env.spec.max_episode_steps):
     if journal_learn["episode_idx"] + 1 > warmup_episodes:
         experience_batch = buffer.extract_experience(rngs, 1024)
         qloss = online_update_fn(qnet_online, qnet_stable, optimizer, experience_batch)
-        print(f"q value loss: {qloss}")
+        qnet_stable = polyak_update(qnet_online, qnet_stable)
+        # print(f"q value loss: {qloss}")
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
     journal_learn["episode_len"][-1] += 1
