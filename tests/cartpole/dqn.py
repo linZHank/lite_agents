@@ -91,7 +91,8 @@ def resolve_and_assess(rngs, critic, explore_epsilon, obs):
 
 rngs = nnx.Rngs(25)
 qnet = QValueNet(rngs=rngs)
-explore_epsilon = 0.5
+epsilon = 0.999
+warmup_episodes = 5
 buffer = DQNBuffer()
 journal_learn = {
     "episode_idx": 0,
@@ -107,11 +108,13 @@ env = gym.make("CartPole-v1", render_mode="rgb_array")
 last_obs, info = env.reset()
 for st in range(5 * env.spec.max_episode_steps):
     # Play a step
-    pred_act, q_val = resolve_and_assess(rngs, qnet, explore_epsilon, last_obs)
+    pred_act, q_val = resolve_and_assess(rngs, qnet, epsilon, last_obs)
     act = pred_act.squeeze()
     next_obs, rew, term, trunc, info = env.step(np.array(act))
     buffer.store_step(last_obs, act, rew, term, next_obs)
     last_obs = next_obs.copy()
+    if journal_learn["episode_idx"] + 1 > warmup_episodes:
+        experience_batch = buffer.extract_experience(rngs, 1024)
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
     journal_learn["episode_len"][-1] += 1
@@ -127,3 +130,5 @@ for st in range(5 * env.spec.max_episode_steps):
         )
         ep_return = 0
         pobs, _ = env.reset()
+        journal_learn["episode_len"].append(0)
+        journal_learn["deposit_return"].append(0.0)
