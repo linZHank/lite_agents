@@ -5,6 +5,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from flax import nnx
+import optax
 
 ExperienceBatch = namedtuple("ExperienceBatch", "lobs act rew disct nobs")
 
@@ -71,6 +72,28 @@ class QValueNet(nnx.Module):
         q = self.linear3(x)
 
         return q
+
+
+def loss_fn(self, critic_online, critic_stable, experience_batch):
+    @jax.vmap
+    def double_q_error(data, q_pred, q_next, q_duel):
+        q_target = jax.lax.stop_gradient(
+            data.rew + data.disct * q_next[q_duel.argmax(axis=-1)]
+        )
+        td_error = q_target - q_pred[data.act]
+        return td_error
+
+    qval_pred = critic_online(experience_batch.lobs)
+    qval_next = critic_stable(experience_batch.nobs)
+    qval_duel = critic_online(experience_batch.nobs)
+    qerr = double_q_error(
+        experience_batch,
+        qval_pred,
+        qval_next,
+        qval_duel,
+    )
+    loss_value = optax.l2_loss(qerr).mean()
+    return loss_value
 
 
 @nnx.jit
