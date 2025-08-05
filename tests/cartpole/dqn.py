@@ -48,7 +48,7 @@ class DQNBuffer:
 
         experience_batch = ExperienceBatch(
             jnp.array(lobs_samples),
-            jnp.array(act_samples),
+            jnp.array(act_samples, dtype=jnp.int16),
             jnp.array(rew_samples),
             jnp.array(disct_samples),
             jnp.array(nobs_samples),
@@ -99,6 +99,14 @@ def loss_fn(critic_online, critic_stable, experience_batch):
 
 
 @nnx.jit
+def online_update_fn(critic_online, critic_stable, optimizer, experience_batch):
+    grad_fn = nnx.value_and_grad(loss_fn)
+    loss_val, grads = grad_fn(critic_online, critic_stable, experience_batch)
+    optimizer.update(grads)
+    return loss_val
+
+
+@nnx.jit
 def resolve_and_assess(rngs, critic, explore_epsilon, obs):
     # pred_act, q_val = resolve_and_assess(rngs, explore_epsilon, critic, last_obs)
     q_value = critic(obs)
@@ -119,6 +127,7 @@ qnet_online = QValueNet(rngs=rngs)
 qnet_stable = QValueNet(rngs=rngs)
 epsilon = 0.999
 warmup_episodes = 5
+optimizer = nnx.Optimizer(qnet_online, optax.adamw(3e-4))
 buffer = DQNBuffer()
 journal_learn = {
     "episode_idx": 0,
@@ -142,6 +151,7 @@ for st in range(5 * env.spec.max_episode_steps):
     if journal_learn["episode_idx"] + 1 > warmup_episodes:
         experience_batch = buffer.extract_experience(rngs, 1024)
         qloss = loss_fn(qnet_online, qnet_stable, experience_batch)
+        print(f"q value loss: {qloss}")
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
     journal_learn["episode_len"][-1] += 1
