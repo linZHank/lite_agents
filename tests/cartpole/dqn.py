@@ -6,40 +6,35 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-ExperienceBatch = namedtuple(
-    "ExperienceBatch", "last_observation action reward discount next_observation"
-)
+ExperienceBatch = namedtuple("ExperienceBatch", "lobs act rew disct nobs")
 
 
 class DQNBuffer:
     def __init__(
         self,
-        loc: int = 0,
-        capacity: int = int(1e6),
         obs_dims: int = 4,
         discount_rate: float = 0.99,
+        capacity: int = int(1e4),
     ):
-        self.lobs_buf = jnp.zeros((capacity, obs_dims))
-        self.act_buf = jnp.zeros((capacity, 1))
-        self.rew_buf = jnp.zeros((capacity, 1))
-        self.adiscnt_buf = jnp.zeros((capacity, 1))  # amended discounts
-        self.nobs_buf = jnp.zeros_like(self.lobs_buf)
+        self.lobs_buf = np.zeros((capacity, obs_dims))
+        self.act_buf = np.zeros((capacity, 1))
+        self.rew_buf = np.zeros((capacity, 1))
+        self.disct_buf = np.zeros((capacity, 1))
+        self.nobs_buf = np.zeros_like(self.lobs_buf)
         # Vars
         self.occupancy = 0
         # Constants
         self.capacity = capacity
         self.discount_rate = discount_rate
 
-    @nnx.jit
     def store_step(self, last_obs, act, rew, term, next_obs):
         self.lobs_buf[self.occupancy] = last_obs
         self.act_buf[self.occupancy] = act
         self.rew_buf[self.occupancy] = rew
-        self.adiscnt_buf[self.occupancy] = (1 - term) * self.discount_rate
+        self.disct_buf[self.occupancy] = (1 - term) * self.discount_rate
         self.nobs_buf[self.occupancy] = next_obs
         self.occupancy = (self.occupancy + 1) % self.capacity
 
-    @nnx.jit
     def extract_experience(self, rngs, batch_size):
         shuffled_inds = jax.random.choice(
             key=rngs.params(), a=jnp.arange(self.occupancy), shape=(batch_size,)
@@ -47,15 +42,15 @@ class DQNBuffer:
         lobs_samples = self.lobs_buf[shuffled_inds]
         act_samples = self.act_buf[shuffled_inds]
         rew_samples = self.rew_buf[shuffled_inds]
-        adiscnt_samples = self.adiscnt_buf[shuffled_inds]
+        disct_samples = self.disct_buf[shuffled_inds]
         nobs_samples = self.nobs_buf[shuffled_inds]
 
         experience_batch = ExperienceBatch(
-            lobs_samples,
-            act_samples,
-            rew_samples,
-            adiscnt_samples,
-            nobs_samples,
+            jnp.array(lobs_samples),
+            jnp.array(act_samples),
+            jnp.array(rew_samples),
+            jnp.array(disct_samples),
+            jnp.array(nobs_samples),
         )
 
         return experience_batch
@@ -97,6 +92,7 @@ def resolve_and_assess(rngs, critic, explore_epsilon, obs):
 rngs = nnx.Rngs(25)
 qnet = QValueNet(rngs=rngs)
 explore_epsilon = 0.5
+buffer = DQNBuffer()
 journal_learn = {
     "episode_idx": 0,
     "step_idx": 0,
@@ -114,7 +110,7 @@ for st in range(5 * env.spec.max_episode_steps):
     pred_act, q_val = resolve_and_assess(rngs, qnet, explore_epsilon, last_obs)
     act = pred_act.squeeze()
     next_obs, rew, term, trunc, info = env.step(np.array(act))
-    # buffer.store_step(last_obs, pred_act, rew, term, next_obs)
+    buffer.store_step(last_obs, act, rew, term, next_obs)
     last_obs = next_obs.copy()
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
