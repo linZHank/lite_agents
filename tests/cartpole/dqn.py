@@ -15,39 +15,47 @@ class DQNBuffer:
     def __init__(
         self,
         loc: int = 0,
-        max_cap: int = int(1e6),
+        capacity: int = int(1e6),
         obs_dims: int = 4,
-        discount: float = 0.99,
+        discount_rate: float = 0.99,
     ):
-        self.lobs_buf = np.zeros((max_cap, obs_dims))
-        self.act_buf = np.zeros((max_cap, 1))
-        self.rew_buf = np.zeros((max_cap, 1))
-        self.adjdisc_buf = np.zeros((max_cap, 1))
-        self.nobs_buf = np.zeros_like(self.lobs_buf)
-        self.loc = loc
-        self.discount = discount
+        self.lobs_buf = jnp.zeros((capacity, obs_dims))
+        self.act_buf = jnp.zeros((capacity, 1))
+        self.rew_buf = jnp.zeros((capacity, 1))
+        self.adiscnt_buf = jnp.zeros((capacity, 1))  # amended discounts
+        self.nobs_buf = jnp.zeros_like(self.lobs_buf)
+        # Vars
+        self.occupancy = 0
+        # Constants
+        self.capacity = capacity
+        self.discount_rate = discount_rate
 
+    @nnx.jit
     def store_step(self, last_obs, act, rew, term, next_obs):
-        self.lobs_buf[self.loc] = last_obs
-        self.act_buf[self.loc] = act
-        self.rew_buf[self.loc] = rew
-        self.adjdisc_buf[self.loc] = (1 - term) * self.discount
-        self.nobs_buf[self.loc] = next_obs
+        self.lobs_buf[self.occupancy] = last_obs
+        self.act_buf[self.occupancy] = act
+        self.rew_buf[self.occupancy] = rew
+        self.adiscnt_buf[self.occupancy] = (1 - term) * self.discount_rate
+        self.nobs_buf[self.occupancy] = next_obs
+        self.occupancy = (self.occupancy + 1) % self.capacity
 
-    def extract_experience(self, batch_size, discount=0.98):
-        shuffled_ids = np.random.randint(low=0, high=self.capacity, size=(batch_size,))
-        observations_batch = jnp.array(self.observations)  # NOTE: won't work under 1D
-        actions_batch = jnp.array(self.actions)
-        returns_batch = jnp.expand_dims(jnp.array(self.step_returns), axis=-1)
-        advantages_batch = jnp.expand_dims(jnp.array(self.advantages), axis=-1)
-        log_probas_batch = jnp.array(self.log_probas)
+    @nnx.jit
+    def extract_experience(self, rngs, batch_size):
+        shuffled_inds = jax.random.choice(
+            key=rngs.params(), a=jnp.arange(self.occupancy), shape=(batch_size,)
+        )
+        lobs_samples = self.lobs_buf[shuffled_inds]
+        act_samples = self.act_buf[shuffled_inds]
+        rew_samples = self.rew_buf[shuffled_inds]
+        adiscnt_samples = self.adiscnt_buf[shuffled_inds]
+        nobs_samples = self.nobs_buf[shuffled_inds]
 
         experience_batch = ExperienceBatch(
-            last_observation_samples,
-            action_samples,
-            reward_samples,
-            discount_samples,
-            next_observation_samples,
+            lobs_samples,
+            act_samples,
+            rew_samples,
+            adiscnt_samples,
+            nobs_samples,
         )
 
         return experience_batch
