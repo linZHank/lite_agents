@@ -118,14 +118,14 @@ def polyak_update(critic_online, critic_stable):
 
 
 @nnx.jit
-def resolve_and_assess(rngs, critic, explore_epsilon, obs):
+def resolve_and_assess(rngs, critic, explore_rate, obs):
     # pred_act, q_val = resolve_and_assess(rngs, explore_epsilon, critic, last_obs)
     q_value = critic(obs)
     greedy_action = q_value.argmax(axis=-1)
     sampled_action = jax.random.randint(key=rngs.params(), shape=(), minval=0, maxval=2)
     selector = jax.random.uniform(key=rngs.params())
     action = jax.lax.select(
-        pred=selector > explore_epsilon,
+        pred=selector > explore_rate,
         on_true=greedy_action,
         on_false=sampled_action,
     )
@@ -133,12 +133,22 @@ def resolve_and_assess(rngs, critic, explore_epsilon, obs):
     return action, q_value
 
 
+# SETUP
 rngs = nnx.Rngs(25)
 qnet_online = QValueNet(rngs=rngs)
 qnet_stable = QValueNet(rngs=rngs)
-epsilon = 0.999
 warmup_episodes = 5
-optimizer = nnx.Optimizer(qnet_online, optax.adamw(1e-4))
+epsilon_decay_episodes = 100
+# epsilon = 1.0
+epsilon_schedule = optax.linear_schedule(
+    init_value=1.0,
+    end_value=0.01,
+    transition_steps=epsilon_decay_episodes,
+    transition_begin=warmup_episodes,
+)
+epsilon = epsilon_schedule(0)
+print(epsilon)
+optimizer = nnx.Optimizer(qnet_online, optax.adamw(3e-4))
 buffer = DQNBuffer()
 journal_learn = {
     "episode_idx": 0,
@@ -160,7 +170,7 @@ for st in range(5 * env.spec.max_episode_steps):
     buffer.store_step(last_obs, act, rew, term, next_obs)
     last_obs = next_obs.copy()
     if journal_learn["episode_idx"] + 1 > warmup_episodes:
-        experience_batch = buffer.extract_experience(rngs, 1024)
+        experience_batch = buffer.extract_experience(rngs, 512)
         qloss = online_update_fn(qnet_online, qnet_stable, optimizer, experience_batch)
         qnet_stable = polyak_update(qnet_online, qnet_stable)
         print(f"q value loss: {qloss}")
@@ -175,10 +185,10 @@ for st in range(5 * env.spec.max_episode_steps):
         )
         # TODO: need a logger
         print(
-            f"---\nepisode: {journal_learn['episode_idx']}, length: {journal_learn['episode_len'][-1]}, return: {journal_learn['deposit_return'][-1]}\n---\n"
+            f"---\nepisode: {journal_learn['episode_idx']}, epsilon: {epsilon}, length: {journal_learn['episode_len'][-1]}, return: {journal_learn['deposit_return'][-1]}\n---\n"
         )
         ep_return = 0
         pobs, _ = env.reset()
         journal_learn["episode_len"].append(0)
         journal_learn["deposit_return"].append(0.0)
-        # TODO: update epsilon
+        epsilon = epsilon_schedule(journal_learn["episode_idx"])
