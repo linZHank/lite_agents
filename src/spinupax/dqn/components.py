@@ -4,9 +4,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from tensorflow_probability.substrates.jax.distributions import Categorical, Normal
-
-from scipy.signal import lfilter
 
 
 ExperienceBatch = namedtuple("ExperienceBatch", "lobs act rew disct nobs")
@@ -63,48 +60,8 @@ class DQNBuffer:
         return experience_batch
 
 
-# class MLPNet(nnx.Module):
-#     """A simple multi-layer perceptron network"""
-#
-#     def __init__(
-#         self,
-#         rngs: nnx.Rngs,
-#         input_dims: int,
-#         output_dims: int,
-#         hidden_sizes: tuple = (64, 64),
-#     ):
-#         self.backbone_sizes = (input_dims, *hidden_sizes)
-#         self.backbone_transforms = []  # TODO: functionize
-#         for i in range(len(self.backbone_sizes) - 1):
-#             self.backbone_transforms.append(
-#                 nnx.Linear(
-#                     self.backbone_sizes[i], self.backbone_sizes[i + 1], rngs=rngs
-#                 )
-#             )
-#         self.output_transform = nnx.Linear(
-#             self.backbone_sizes[-1], output_dims, rngs=rngs
-#         )
-
-
-# SETUP
-class MLPNet(nnx.Module):
-    """MLP Critic"""
-
-    def __init__(self, rngs: nnx.Rngs):
-        self.linear1 = nnx.Linear(4, 64, rngs=rngs)
-        self.linear2 = nnx.Linear(64, 64, rngs=rngs)
-        self.linear3 = nnx.Linear(64, 2, rngs=rngs)
-
-    def __call__(self, x):
-        x = nnx.relu(self.linear1(x))
-        x = nnx.relu(self.linear2(x))
-        q = self.linear3(x)
-
-        return q
-
-
-class CategoricalPolicyNet(MLPNet):
-    """Actor for discrete actions space"""
+class MLPQNet(nnx.Module):
+    """Q-Value Network"""
 
     def __init__(
         self,
@@ -113,68 +70,21 @@ class CategoricalPolicyNet(MLPNet):
         action_dims: int,
         hidden_sizes: tuple = (64, 64),
     ):
-        super().__init__(
-            rngs=rngs,
-            input_dims=observation_dims,
-            output_dims=action_dims,
-            hidden_sizes=hidden_sizes,
+        self.backbone_sizes = (observation_dims, *hidden_sizes)
+        self.backbone_transforms = []  # TODO: functionize
+        for i in range(len(self.backbone_sizes) - 1):
+            self.backbone_transforms.append(
+                nnx.Linear(
+                    self.backbone_sizes[i], self.backbone_sizes[i + 1], rngs=rngs
+                )
+            )
+        self.output_transform = nnx.Linear(
+            self.backbone_sizes[-1], action_dims, rngs=rngs
         )
 
     def __call__(self, x):
         for trans in self.backbone_transforms:
             x = nnx.relu(trans(x))
-        y = self.output_transform(x)
-        log_prob = nnx.log_softmax(y)  # log(pi(a|s))
-        pi = Categorical(logits=jnp.expand_dims(log_prob, axis=1))
+        q_value = self.output_transform(x)
 
-        return pi
-
-
-class GaussianPolicyNet(MLPNet):
-    """Actor for discrete actions space"""
-
-    def __init__(
-        self,
-        rngs: nnx.Rngs,
-        observation_dims: int,
-        action_dims: int,
-        hidden_sizes: tuple = (64, 64),
-    ):
-        super().__init__(
-            rngs=rngs,
-            input_dims=observation_dims,
-            output_dims=action_dims,
-            hidden_sizes=hidden_sizes,
-        )
-
-    def __call__(self, x):
-        for trans in self.backbone_transforms:
-            x = nnx.relu(trans(x))
-        mu = self.output_transform(x)
-        log_sigma = self.output_transform(x)
-        pi = Normal(loc=mu, scale=jnp.exp(log_sigma))
-
-        return pi
-
-
-class ValueNet(MLPNet):
-    """Critic Net"""
-
-    def __init__(
-        self,
-        rngs: nnx.Rngs,
-        observation_dims: int,
-        hidden_sizes: tuple = (64, 64),
-    ):
-        super().__init__(
-            rngs=rngs,
-            input_dims=observation_dims,
-            output_dims=1,
-            hidden_sizes=hidden_sizes,
-        )
-
-    def __call__(self, x):
-        for trans in self.backbone_transforms:
-            x = nnx.relu(trans(x))
-        v = self.output_transform(x)
-        return v
+        return q_value
