@@ -60,7 +60,7 @@ class DQNBuffer:
         return experience_batch
 
 
-class MLPQNet(nnx.Module):
+class QValueNet(nnx.Module):
     """Q-Value Network"""
 
     def __init__(
