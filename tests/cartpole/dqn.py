@@ -24,22 +24,24 @@ class DQNBuffer:
         self.nobs_buf = np.zeros_like(self.lobs_buf)
         # Vars
         self.occupancy = 0
+        self.loc = 0
         # Constants
         self.capacity = capacity
         self.discount_rate = discount_rate
 
     def store_step(self, last_obs, act, rew, term, next_obs):
-        self.lobs_buf[self.occupancy] = last_obs
-        self.act_buf[self.occupancy] = act
-        self.rew_buf[self.occupancy] = rew
-        self.disct_buf[self.occupancy] = (1 - term) * self.discount_rate
-        self.nobs_buf[self.occupancy] = next_obs
-        self.occupancy = (self.occupancy + 1) % self.capacity
+        self.lobs_buf[self.loc] = last_obs
+        self.act_buf[self.loc] = act
+        self.rew_buf[self.loc] = rew
+        self.disct_buf[self.loc] = (1 - term) * self.discount_rate
+        self.nobs_buf[self.loc] = next_obs
+        self.loc = (self.loc + 1) % self.capacity
+        self.occupancy += 1
 
     def extract_experience(self, rngs, batch_size):
         shuffled_inds = jax.random.choice(
             key=rngs.params(),
-            a=jnp.arange(self.occupancy),  # TODO: resolve max cap reset
+            a=jnp.arange(min(self.occupancy, self.capacity)),
             shape=(batch_size,),
         )
         lobs_samples = self.lobs_buf[shuffled_inds]
@@ -164,7 +166,7 @@ journal_learn = {
 # LOOP
 env = gym.make("CartPole-v1", render_mode="rgb_array")
 last_obs, info = env.reset()
-for st in range(200 * env.spec.max_episode_steps):
+for st in range(100 * env.spec.max_episode_steps):
     # Play a step
     pred_act, q_val = resolve_and_assess(rngs, qnet_online, epsilon, last_obs)
     act = pred_act.squeeze()
@@ -197,6 +199,7 @@ for st in range(200 * env.spec.max_episode_steps):
 
 
 # Evaluation
+input("Press ENTER to continue:")
 env = gym.make("CartPole-v1", render_mode="human")
 obs, _ = env.reset()
 episode_return = 0.0
