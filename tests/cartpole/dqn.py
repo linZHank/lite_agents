@@ -74,27 +74,25 @@ class QValueNet(nnx.Module):
         return q
 
 
-@jax.vmap
-def double_q_error(data, q_pred, q_next, q_duel):
-    q_target = jax.lax.stop_gradient(
-        data.rew + data.disct * q_next[q_duel.argmax(axis=-1)]
-    )
-    td_error = q_target - q_pred[data.act]
-    return td_error
-
-
-@nnx.jit
 def loss_fn(critic_online, critic_stable, experience_batch):
+    @jax.vmap
+    def doubleq_error(data, q_pred, q_next, q_duel):
+        q_targ = jax.lax.stop_gradient(
+            data.rew + data.disct * q_next[q_duel.argmax(axis=-1)]
+        )
+        td_error = q_targ - q_pred[data.act]
+        return td_error
+
     qval_pred = critic_online(experience_batch.lobs)
     qval_next = critic_stable(experience_batch.nobs)
     qval_duel = critic_online(experience_batch.nobs)
-    qerr = double_q_error(
+    td_err = doubleq_error(
         experience_batch,
         qval_pred,
         qval_next,
         qval_duel,
     )
-    loss_value = optax.l2_loss(qerr).mean()
+    loss_value = optax.l2_loss(td_err).mean()
     return loss_value
 
 
@@ -106,11 +104,14 @@ def online_update_fn(critic_online, critic_stable, optimizer, experience_batch):
     return loss_val
 
 
+@nnx.jit
 def polyak_update(critic_online, critic_stable):
     _, state_online = nnx.split(critic_online)
     graph_def, state_stable = nnx.split(critic_stable)
     state_update = optax.incremental_update(
-        new_tensors=state_online, old_tensors=state_stable, step_size=0.01
+        new_tensors=state_online,
+        old_tensors=state_stable,
+        step_size=0.01,
     )
     critic_stable = nnx.merge(graph_def, state_update)
     return critic_stable
@@ -137,7 +138,7 @@ qnet_online = QValueNet(rngs=rngs)
 qnet_stable = QValueNet(rngs=rngs)
 epsilon = 0.999
 warmup_episodes = 5
-optimizer = nnx.Optimizer(qnet_online, optax.adamw(3e-4))
+optimizer = nnx.Optimizer(qnet_online, optax.adamw(1e-4))
 buffer = DQNBuffer()
 journal_learn = {
     "episode_idx": 0,
@@ -162,7 +163,7 @@ for st in range(5 * env.spec.max_episode_steps):
         experience_batch = buffer.extract_experience(rngs, 1024)
         qloss = online_update_fn(qnet_online, qnet_stable, optimizer, experience_batch)
         qnet_stable = polyak_update(qnet_online, qnet_stable)
-        # print(f"q value loss: {qloss}")
+        print(f"q value loss: {qloss}")
     # Step statistics
     journal_learn["step_idx"] += 1  # TODO: update journal in a util function
     journal_learn["episode_len"][-1] += 1
@@ -180,3 +181,4 @@ for st in range(5 * env.spec.max_episode_steps):
         pobs, _ = env.reset()
         journal_learn["episode_len"].append(0)
         journal_learn["deposit_return"].append(0.0)
+        # TODO: update epsilon
