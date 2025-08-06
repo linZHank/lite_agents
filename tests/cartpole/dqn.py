@@ -38,7 +38,9 @@ class DQNBuffer:
 
     def extract_experience(self, rngs, batch_size):
         shuffled_inds = jax.random.choice(
-            key=rngs.params(), a=jnp.arange(self.occupancy), shape=(batch_size,)
+            key=rngs.params(),
+            a=jnp.arange(self.occupancy),  # TODO: resolve max cap reset
+            shape=(batch_size,),
         )
         lobs_samples = self.lobs_buf[shuffled_inds]
         act_samples = self.act_buf[shuffled_inds]
@@ -137,18 +139,18 @@ def resolve_and_assess(rngs, critic, explore_rate, obs):
 rngs = nnx.Rngs(25)
 qnet_online = QValueNet(rngs=rngs)
 qnet_stable = QValueNet(rngs=rngs)
-warmup_episodes = 5
+warmup_episodes = 10
 epsilon_decay_episodes = 100
 # epsilon = 1.0
 epsilon_schedule = optax.linear_schedule(
     init_value=1.0,
-    end_value=0.01,
+    end_value=0.05,
     transition_steps=epsilon_decay_episodes,
     transition_begin=warmup_episodes,
 )
 epsilon = epsilon_schedule(0)
 print(epsilon)
-optimizer = nnx.Optimizer(qnet_online, optax.adamw(3e-4))
+optimizer = nnx.Optimizer(qnet_online, optax.adamw(5e-4))
 buffer = DQNBuffer()
 journal_learn = {
     "episode_idx": 0,
@@ -162,7 +164,7 @@ journal_learn = {
 # LOOP
 env = gym.make("CartPole-v1", render_mode="rgb_array")
 last_obs, info = env.reset()
-for st in range(5 * env.spec.max_episode_steps):
+for st in range(200 * env.spec.max_episode_steps):
     # Play a step
     pred_act, q_val = resolve_and_assess(rngs, qnet_online, epsilon, last_obs)
     act = pred_act.squeeze()
@@ -192,3 +194,18 @@ for st in range(5 * env.spec.max_episode_steps):
         journal_learn["episode_len"].append(0)
         journal_learn["deposit_return"].append(0.0)
         epsilon = epsilon_schedule(journal_learn["episode_idx"])
+
+
+# Evaluation
+env = gym.make("CartPole-v1", render_mode="human")
+obs, _ = env.reset()
+episode_return = 0.0
+epsilon = 0.01
+for _ in range(env.spec.max_episode_steps):
+    pred_act, _ = resolve_and_assess(rngs, qnet_online, epsilon, obs)
+    act = pred_act.squeeze()
+    obs, rew, term, trunc, info = env.step(np.array(act))
+    episode_return += rew
+    if term or trunc:
+        print(f"\n---return: {episode_return}---\n")
+        break
