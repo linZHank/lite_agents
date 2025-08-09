@@ -12,11 +12,11 @@ ExperienceBatch = namedtuple("ExperienceBatch", "lobs act rew disct nobs")
 class DQNBuffer:
     def __init__(
         self,
-        obs_dims: int,
-        discount_rate: float = 0.99,
+        observation_dims: int,
+        discount: float = 0.99,
         capacity: int = int(1e5),
     ):
-        self.lobs_buf = np.zeros((capacity, obs_dims))
+        self.lobs_buf = np.zeros((capacity, observation_dims))
         self.act_buf = np.zeros((capacity, 1))
         self.rew_buf = np.zeros((capacity, 1))
         self.disct_buf = np.zeros((capacity, 1))
@@ -26,13 +26,13 @@ class DQNBuffer:
         self.loc = 0
         # Constants
         self.capacity = capacity
-        self.discount_rate = discount_rate
+        self.discount = discount
 
     def store_step(self, last_obs, act, rew, term, next_obs):
         self.lobs_buf[self.loc] = last_obs
         self.act_buf[self.loc] = act
         self.rew_buf[self.loc] = rew
-        self.disct_buf[self.loc] = (1 - term) * self.discount_rate
+        self.disct_buf[self.loc] = (1 - term) * self.discount
         self.nobs_buf[self.loc] = next_obs
         self.loc = (self.loc + 1) % self.capacity
         self.occupancy += 1
