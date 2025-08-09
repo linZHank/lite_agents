@@ -192,7 +192,7 @@ for st in range(100 * env.spec.max_episode_steps):
             f"---\nepisode: {journal_learn['episode_idx']}, epsilon: {epsilon}, length: {journal_learn['episode_len'][-1]}, return: {journal_learn['deposit_return'][-1]}\n---\n"
         )
         ep_return = 0
-        pobs, _ = env.reset()
+        last_obs, _ = env.reset()
         journal_learn["episode_len"].append(0)
         journal_learn["deposit_return"].append(0.0)
         epsilon = epsilon_schedule(journal_learn["episode_idx"])
