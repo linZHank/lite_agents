@@ -19,6 +19,50 @@ from spinupax.dqn.components import (
 import matplotlib.pyplot as plt
 
 
+@jax.vmap
+def doubleq_error(data, q_pred, q_next, q_duel):
+    q_targ = jax.lax.stop_gradient(
+        data.rew + data.disct * q_next[q_duel.argmax(axis=-1)]
+    )
+    td_error = q_targ - q_pred[data.act]
+    return td_error
+
+
+def loss_fn(critic_online, critic_stable, experience_batch):
+    qval_pred = critic_online(experience_batch.lobs)
+    qval_next = critic_stable(experience_batch.nobs)
+    qval_duel = critic_online(experience_batch.nobs)
+    td_error = doubleq_error(
+        experience_batch,
+        qval_pred,
+        qval_next,
+        qval_duel,
+    )
+    loss_value = optax.l2_loss(td_error).mean()
+    return loss_value
+
+
+@nnx.jit
+def online_update_fn(critic_online, critic_stable, optimizer, experience_batch):
+    grad_fn = nnx.value_and_grad(loss_fn)
+    loss_val, grads = grad_fn(critic_online, critic_stable, experience_batch)
+    optimizer.update(grads)
+    return loss_val
+
+
+@nnx.jit
+def polyak_update(critic_online, critic_stable):
+    _, state_online = nnx.split(critic_online)
+    graph_def, state_stable = nnx.split(critic_stable)
+    state_update = optax.incremental_update(
+        new_tensors=state_online,
+        old_tensors=state_stable,
+        step_size=0.01,
+    )
+    critic_stable = nnx.merge(graph_def, state_update)
+    return critic_stable
+
+
 @nnx.jit
 def resolve_and_assess(rngs, critic, explore_rate, observation):
     q_value = critic(observation)
@@ -45,15 +89,15 @@ def learn(
     seed: int = 25,
     discount: float = 0.99,
     capacity: int = int(1e5),
-    max_steps=int(1e3),
+    max_steps=int(1e4),
     warmup_episodes: int = 10,
     learning_rate: float = 3e-4,
     hidden_sizes: tuple = (64, 64),
     epsilon_decay_episodes: int = 100,
-    experience_sample_size: int = 512,
+    sample_size: int = 64,
     eval_flag: bool = False,
     ckpt_dir: PosixPath = Path("/tmp/spinupax/dqn/checkpoints/"),
-    save_per_epoch: int = 10,
+    save_per_episode: int = 100,
 ):
     # SETUP
     env = gym.make(env_name, **env_options)
@@ -100,13 +144,16 @@ def learn(
         next_obs, rew, term, trunc, info = env.step(np.array(act))
         buffer.store_step(last_obs, act, rew, term, next_obs)
         last_obs = next_obs.copy()
-        # if journal_learn["episode_idx"] + 1 > warmup_episodes:
-        #     experience_batch = buffer.extract_experience(rngs, 512)
-        #     qloss = online_update_fn(
-        #         qnet_online, qnet_stable, optimizer, experience_batch
-        #     )
-        #     qnet_stable = polyak_update(qnet_online, qnet_stable)
-        #     print(f"q value loss: {qloss}")
+        # Train a step
+        if journal_learn["episode_idx"] + 1 > warmup_episodes:
+            experience_batch = buffer.extract_experience(rngs, sample_size)
+            qloss = online_update_fn(
+                qnet_online,
+                qnet_stable,
+                optimizer,
+                experience_batch,
+            )
+            qnet_stable = polyak_update(qnet_online, qnet_stable)
         # Step statistics
         journal_learn["step_idx"] += 1  # TODO: update journal in a util function
         journal_learn["episode_len"][-1] += 1
