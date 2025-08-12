@@ -83,6 +83,34 @@ def resolve_and_assess(rngs, critic, explore_rate, observation):
     return action, q_value
 
 
+def save_model(
+    ckpt_dir: PosixPath,
+    epoch_idx: int,
+    critic: QValueNet,
+    checkpointer: ocp.StandardCheckpointer,
+):
+    _, critic_state = nnx.split(critic)
+    critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
+    checkpointer.save(critic_path, critic_state)
+    print(f"Critic state saved at: {critic_path}")
+
+
+def load_models(
+    ckpt_dir: PosixPath,
+    epoch_idx: int,
+    graphdef,
+    abstract_state,
+):
+    critic_path = ckpt_dir / f"critic/state_{epoch_idx}"
+    checkpointer = ocp.StandardCheckpointer()
+    restored_state = checkpointer.restore(critic_path, abstract_state)
+    print("Critic State restored: ")
+    nnx.display(restored_state)
+    restored_critic = nnx.merge(graphdef, restored_state)
+
+    return restored_critic
+
+
 def learn(
     env_name: str = "CartPole-v1",
     env_options: Optional[dict] = {"render_mode": "rgb_array"},
