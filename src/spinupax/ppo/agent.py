@@ -119,7 +119,7 @@ def load_models(
     print("Critic State restored: ")
     nnx.display(restored_critic_state)
     restored_actor = nnx.merge(actor_graphdef, restored_actor_state)
-    restored_critic = nnx.merge(critic_graphdef, restored_actor_state)
+    restored_critic = nnx.merge(critic_graphdef, restored_critic_state)
 
     return restored_actor, restored_critic
 
